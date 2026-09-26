@@ -1,0 +1,17 @@
+{
+  "name": "anveshana-central-university-club",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ANVESHANA Central University Club - Explore • Build • Bring Ideas to Life",
+  "scripts": {
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,green\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "server:dev": "npm run dev --prefix server",
+    "client:dev": "npm run dev --prefix client",
+    "build:client": "npm run build --prefix client",
+    "build:server": "npm run build --prefix server",
+    "build": "npm run build:client && npm run build:server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

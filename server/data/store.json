@@ -1,0 +1,224 @@
+{
+  "exams": [
+    {
+      "id": "exam-dsa-2026",
+      "title": "Anveshana DSA Challenge",
+      "description": "Central University Club annual competitive algorithmic and data structures assessment.",
+      "passkey": "4827",
+      "duration_minutes": 60,
+      "total_marks": 100,
+      "start_time": "2026-09-29T03:25:52.289Z",
+      "end_time": "2026-09-30T03:25:52.289Z",
+      "status": "LIVE",
+      "max_violations": 3,
+      "allowed_languages": [
+        "java",
+        "c++",
+        "python",
+        "c"
+      ],
+      "created_at": "2026-09-29T03:25:52.289Z"
+    }
+  ],
+  "questions": [
+    {
+      "id": "q-two-sum",
+      "exam_id": "exam-dsa-2026",
+      "title": "Two Sum",
+      "description": "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.\n\nYou may assume that each input would have exactly one solution, and you may not use the same element twice. You can return the answer in any order.",
+      "difficulty": "Easy",
+      "marks": 10,
+      "order_number": 1,
+      "starter_templates": {
+        "java": "import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        if (!sc.hasNextInt()) return;\n        int n = sc.nextInt();\n        int[] nums = new int[n];\n        for (int i = 0; i < n; i++) {\n            nums[i] = sc.nextInt();\n        }\n        int target = sc.nextInt();\n        \n        Map<Integer, Integer> map = new HashMap<>();\n        for (int i = 0; i < n; i++) {\n            int complement = target - nums[i];\n            if (map.containsKey(complement)) {\n                System.out.println(map.get(complement) + \" \" + i);\n                return;\n            }\n            map.put(nums[i], i);\n        }\n    }\n}",
+        "python": "import sys\n\ndef main():\n    lines = sys.stdin.read().split()\n    if not lines:\n        return\n    n = int(lines[0])\n    nums = [int(x) for x in lines[1:n+1]]\n    target = int(lines[n+1])\n    \n    seen = {}\n    for i, num in enumerate(nums):\n        diff = target - num\n        if diff in seen:\n            print(f\"{seen[diff]} {i}\")\n            return\n        seen[num] = i\n\nif __name__ == '__main__':\n    main()",
+        "cpp": "#include <iostream>\n#include <vector>\n#include <unordered_map>\nusing namespace std;\n\nint main() {\n    int n;\n    if (!(cin >> n)) return 0;\n    vector<int> nums(n);\n    for (int i = 0; i < n; i++) cin >> nums[i];\n    int target;\n    cin >> target;\n\n    unordered_map<int, int> mp;\n    for (int i = 0; i < n; i++) {\n        int comp = target - nums[i];\n        if (mp.count(comp)) {\n            cout << mp[comp] << \" \" << i << endl;\n            return 0;\n        }\n        mp[nums[i]] = i;\n    }\n    return 0;\n}",
+        "c": "#include <stdio.h>\n\nint main() {\n    int n;\n    if (scanf(\"%d\", &n) != 1) return 0;\n    int nums[1000];\n    for (int i = 0; i < n; i++) scanf(\"%d\", &nums[i]);\n    int target;\n    scanf(\"%d\", &target);\n\n    for (int i = 0; i < n; i++) {\n        for (int j = i + 1; j < n; j++) {\n            if (nums[i] + nums[j] == target) {\n                printf(\"%d %d\\n\", i, j);\n                return 0;\n            }\n        }\n    }\n    return 0;\n}"
+      },
+      "created_at": "2026-09-29T03:25:52.289Z"
+    },
+    {
+      "id": "q-reverse-array",
+      "exam_id": "exam-dsa-2026",
+      "title": "Reverse Array",
+      "description": "Given an array of `n` integers, reverse the array in-place and print the elements separated by space.\n\n### Input Format\nFirst line contains integer `n`.\nSecond line contains `n` space-separated integers.\n\n### Output Format\nPrint the reversed array separated by single space.",
+      "difficulty": "Easy",
+      "marks": 10,
+      "order_number": 2,
+      "starter_templates": {
+        "java": "import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        if (!sc.hasNextInt()) return;\n        int n = sc.nextInt();\n        int[] arr = new int[n];\n        for (int i = 0; i < n; i++) arr[i] = sc.nextInt();\n        \n        for (int i = n - 1; i >= 0; i--) {\n            System.out.print(arr[i] + (i > 0 ? \" \" : \"\\n\"));\n        }\n    }\n}",
+        "python": "import sys\n\ndef main():\n    lines = sys.stdin.read().split()\n    if not lines:\n        return\n    n = int(lines[0])\n    arr = lines[1:n+1]\n    print(\" \".join(reversed(arr)))\n\nif __name__ == '__main__':\n    main()",
+        "cpp": "#include <iostream>\n#include <vector>\nusing namespace std;\n\nint main() {\n    int n;\n    if (!(cin >> n)) return 0;\n    vector<int> a(n);\n    for (int i = 0; i < n; i++) cin >> a[i];\n    for (int i = n - 1; i >= 0; i--) {\n        cout << a[i] << (i > 0 ? \" \" : \"\\n\");\n    }\n    return 0;\n}",
+        "c": "#include <stdio.h>\n\nint main() {\n    int n;\n    if (scanf(\"%d\", &n) != 1) return 0;\n    int a[1000];\n    for (int i = 0; i < n; i++) scanf(\"%d\", &a[i]);\n    for (int i = n - 1; i >= 0; i--) {\n        printf(\"%d%s\", a[i], i > 0 ? \" \" : \"\\n\");\n    }\n    return 0;\n}"
+      },
+      "created_at": "2026-09-29T03:25:52.289Z"
+    },
+    {
+      "id": "q-linked-list",
+      "exam_id": "exam-dsa-2026",
+      "title": "Linked List Cycle",
+      "description": "Given a representation of a linked list with `n` nodes and a position `pos` where the tail connects to (-1 if no cycle), determine if there is a cycle. Print \"true\" or \"false\".",
+      "difficulty": "Medium",
+      "marks": 20,
+      "order_number": 3,
+      "starter_templates": {
+        "java": "import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        if (!sc.hasNextInt()) return;\n        int n = sc.nextInt();\n        for (int i = 0; i < n; i++) sc.nextInt();\n        int pos = sc.nextInt();\n        System.out.println(pos >= 0 ? \"true\" : \"false\");\n    }\n}",
+        "python": "import sys\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    n = int(data[0])\n    pos = int(data[n+1])\n    print(\"true\" if pos >= 0 else \"false\")\n\nif __name__ == '__main__':\n    main()",
+        "cpp": "#include <iostream>\nusing namespace std;\n\nint main() {\n    int n;\n    if (!(cin >> n)) return 0;\n    for (int i = 0; i < n; i++) { int x; cin >> x; }\n    int pos;\n    cin >> pos;\n    cout << (pos >= 0 ? \"true\" : \"false\") << endl;\n    return 0;\n}",
+        "c": "#include <stdio.h>\n\nint main() {\n    int n;\n    if (scanf(\"%d\", &n) != 1) return 0;\n    for (int i = 0; i < n; i++) { int x; scanf(\"%d\", &x); }\n    int pos;\n    scanf(\"%d\", &pos);\n    printf(\"%s\\n\", pos >= 0 ? \"true\" : \"false\");\n    return 0;\n}"
+      },
+      "created_at": "2026-09-29T03:25:52.289Z"
+    },
+    {
+      "id": "q-binary-search",
+      "exam_id": "exam-dsa-2026",
+      "title": "Binary Search",
+      "description": "Given a sorted array of `n` distinct integers and a `target` value, return the index if target is found. If not, return -1.",
+      "difficulty": "Easy",
+      "marks": 10,
+      "order_number": 4,
+      "starter_templates": {
+        "java": "import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        if (!sc.hasNextInt()) return;\n        int n = sc.nextInt();\n        int[] arr = new int[n];\n        for (int i = 0; i < n; i++) arr[i] = sc.nextInt();\n        int target = sc.nextInt();\n\n        int left = 0, right = n - 1, ans = -1;\n        while (left <= right) {\n            int mid = left + (right - left) / 2;\n            if (arr[mid] == target) { ans = mid; break; }\n            else if (arr[mid] < target) left = mid + 1;\n            else right = mid - 1;\n        }\n        System.out.println(ans);\n    }\n}",
+        "python": "import sys\n\ndef main():\n    nums = sys.stdin.read().split()\n    if not nums:\n        return\n    n = int(nums[0])\n    arr = [int(x) for x in nums[1:n+1]]\n    target = int(nums[n+1])\n\n    left, right = 0, n - 1\n    ans = -1\n    while left <= right:\n        mid = (left + right) // 2\n        if arr[mid] == target:\n            ans = mid\n            break\n        elif arr[mid] < target:\n            left = mid + 1\n        else:\n            right = mid - 1\n    print(ans)\n\nif __name__ == '__main__':\n    main()",
+        "cpp": "#include <iostream>\n#include <vector>\nusing namespace std;\n\nint main() {\n    int n;\n    if (!(cin >> n)) return 0;\n    vector<int> a(n);\n    for (int i = 0; i < n; i++) cin >> a[i];\n    int target;\n    cin >> target;\n\n    int left = 0, right = n - 1, ans = -1;\n    while (left <= right) {\n        int mid = left + (right - left) / 2;\n        if (a[mid] == target) { ans = mid; break; }\n        else if (a[mid] < target) left = mid + 1;\n        else right = mid - 1;\n    }\n    cout << ans << endl;\n    return 0;\n}",
+        "c": "#include <stdio.h>\n\nint main() {\n    int n;\n    if (scanf(\"%d\", &n) != 1) return 0;\n    int a[1000];\n    for (int i = 0; i < n; i++) scanf(\"%d\", &a[i]);\n    int target;\n    scanf(\"%d\", &target);\n\n    int left = 0, right = n - 1, ans = -1;\n    while (left <= right) {\n        int mid = left + (right - left) / 2;\n        if (a[mid] == target) { ans = mid; break; }\n        else if (a[mid] < target) left = mid + 1;\n        else right = mid - 1;\n    }\n    printf(\"%d\\n\", ans);\n    return 0;\n}"
+      },
+      "created_at": "2026-09-29T03:25:52.289Z"
+    },
+    {
+      "id": "q-stack-impl",
+      "exam_id": "exam-dsa-2026",
+      "title": "Stack Implementation",
+      "description": "Implement a basic min-stack operations processor: push X, pop, top, getMin.",
+      "difficulty": "Medium",
+      "marks": 20,
+      "order_number": 5,
+      "starter_templates": {
+        "java": "import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        Stack<Integer> stack = new Stack<>();\n        Stack<Integer> minStack = new Stack<>();\n        while (sc.hasNext()) {\n            String op = sc.next();\n            if (op.equals(\"push\")) {\n                int val = sc.nextInt();\n                stack.push(val);\n                if (minStack.isEmpty() || val <= minStack.peek()) {\n                    minStack.push(val);\n                }\n            } else if (op.equals(\"pop\")) {\n                if (!stack.isEmpty()) {\n                    int val = stack.pop();\n                    if (!minStack.isEmpty() && val == minStack.peek()) {\n                        minStack.pop();\n                    }\n                }\n            } else if (op.equals(\"top\")) {\n                if (!stack.isEmpty()) System.out.println(stack.peek());\n            } else if (op.equals(\"getMin\")) {\n                if (!minStack.isEmpty()) System.out.println(minStack.peek());\n            }\n        }\n    }\n}",
+        "python": "import sys\n\ndef main():\n    commands = sys.stdin.read().split()\n    stack = []\n    min_stack = []\n    i = 0\n    while i < len(commands):\n        op = commands[i]\n        if op == \"push\":\n            val = int(commands[i+1])\n            stack.append(val)\n            if not min_stack or val <= min_stack[-1]:\n                min_stack.append(val)\n            i += 2\n        elif op == \"pop\":\n            if stack:\n                val = stack.pop()\n                if min_stack and val == min_stack[-1]:\n                    min_stack.pop()\n            i += 1\n        elif op == \"top\":\n            if stack:\n                print(stack[-1])\n            i += 1\n        elif op == \"getMin\":\n            if min_stack:\n                print(min_stack[-1])\n            i += 1\n        else:\n            i += 1\n\nif __name__ == '__main__':\n    main()",
+        "cpp": "#include <iostream>\n#include <stack>\n#include <string>\nusing namespace std;\n\nint main() {\n    string op;\n    stack<int> st, minSt;\n    while (cin >> op) {\n        if (op == \"push\") {\n            int val; cin >> val;\n            st.push(val);\n            if (minSt.empty() || val <= minSt.top()) minSt.push(val);\n        } else if (op == \"pop\") {\n            if (!st.empty()) {\n                int val = st.top(); st.pop();\n                if (!minSt.empty() && val == minSt.top()) minSt.pop();\n            }\n        } else if (op == \"top\") {\n            if (!st.empty()) cout << st.top() << endl;\n        } else if (op == \"getMin\") {\n            if (!minSt.empty()) cout << minSt.top() << endl;\n        }\n    }\n    return 0;\n}",
+        "c": "#include <stdio.h>\n#include <string.h>\n\nint st[1000], minSt[1000];\nint topSt = -1, topMin = -1;\n\nint main() {\n    char op[20];\n    while (scanf(\"%s\", op) == 1) {\n        if (strcmp(op, \"push\") == 0) {\n            int val; scanf(\"%d\", &val);\n            st[++topSt] = val;\n            if (topMin == -1 || val <= minSt[topMin]) {\n                minSt[++topMin] = val;\n            }\n        } else if (strcmp(op, \"pop\") == 0) {\n            if (topSt >= 0) {\n                int val = st[topSt--];\n                if (topMin >= 0 && val == minSt[topMin]) topMin--;\n            }\n        } else if (strcmp(op, \"top\") == 0) {\n            if (topSt >= 0) printf(\"%d\\n\", st[topSt]);\n        } else if (strcmp(op, \"getMin\") == 0) {\n            if (topMin >= 0) printf(\"%d\\n\", minSt[topMin]);\n        }\n    }\n    return 0;\n}"
+      },
+      "created_at": "2026-09-29T03:25:52.289Z"
+    }
+  ],
+  "testCases": [
+    {
+      "id": "tc-1-1",
+      "question_id": "q-two-sum",
+      "input": "4\n2 7 11 15\n9",
+      "expected_output": "0 1",
+      "is_hidden": false,
+      "marks": 3
+    },
+    {
+      "id": "tc-1-2",
+      "question_id": "q-two-sum",
+      "input": "3\n3 2 4\n6",
+      "expected_output": "1 2",
+      "is_hidden": false,
+      "marks": 3
+    },
+    {
+      "id": "tc-1-3",
+      "question_id": "q-two-sum",
+      "input": "2\n3 3\n6",
+      "expected_output": "0 1",
+      "is_hidden": true,
+      "marks": 4
+    },
+    {
+      "id": "tc-2-1",
+      "question_id": "q-reverse-array",
+      "input": "5\n1 2 3 4 5",
+      "expected_output": "5 4 3 2 1",
+      "is_hidden": false,
+      "marks": 3
+    },
+    {
+      "id": "tc-2-2",
+      "question_id": "q-reverse-array",
+      "input": "3\n10 20 30",
+      "expected_output": "30 20 10",
+      "is_hidden": false,
+      "marks": 3
+    },
+    {
+      "id": "tc-2-3",
+      "question_id": "q-reverse-array",
+      "input": "6\n7 14 21 28 35 42",
+      "expected_output": "42 35 28 21 14 7",
+      "is_hidden": true,
+      "marks": 4
+    },
+    {
+      "id": "tc-3-1",
+      "question_id": "q-linked-list",
+      "input": "4\n3 2 0 -4\n1",
+      "expected_output": "true",
+      "is_hidden": false,
+      "marks": 6
+    },
+    {
+      "id": "tc-3-2",
+      "question_id": "q-linked-list",
+      "input": "2\n1 2\n0",
+      "expected_output": "true",
+      "is_hidden": false,
+      "marks": 7
+    },
+    {
+      "id": "tc-3-3",
+      "question_id": "q-linked-list",
+      "input": "1\n1\n-1",
+      "expected_output": "false",
+      "is_hidden": true,
+      "marks": 7
+    },
+    {
+      "id": "tc-4-1",
+      "question_id": "q-binary-search",
+      "input": "6\n-1 0 3 5 9 12\n9",
+      "expected_output": "4",
+      "is_hidden": false,
+      "marks": 3
+    },
+    {
+      "id": "tc-4-2",
+      "question_id": "q-binary-search",
+      "input": "6\n-1 0 3 5 9 12\n2",
+      "expected_output": "-1",
+      "is_hidden": false,
+      "marks": 3
+    },
+    {
+      "id": "tc-4-3",
+      "question_id": "q-binary-search",
+      "input": "10\n2 5 8 12 16 23 38 56 72 91\n23",
+      "expected_output": "5",
+      "is_hidden": true,
+      "marks": 4
+    },
+    {
+      "id": "tc-5-1",
+      "question_id": "q-stack-impl",
+      "input": "push 5 push 3 getMin pop getMin",
+      "expected_output": "3\n5",
+      "is_hidden": false,
+      "marks": 10
+    },
+    {
+      "id": "tc-5-2",
+      "question_id": "q-stack-impl",
+      "input": "push 10 push 20 top getMin",
+      "expected_output": "20\n10",
+      "is_hidden": true,
+      "marks": 10
+    }
+  ],
+  "participants": [],
+  "submissions": [],
+  "securityEvents": [],
+  "examResults": [],
+  "events": []
+}

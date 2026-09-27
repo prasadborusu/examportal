@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --primary: #0B2A5B;
+    --primary-light: #183d7a;
+    --blue-accent: #2563EB;
+    --gold: #F6B51B;
+    --gold-light: #FEF3C7;
+    --peach: #FFE5D1;
+    --lavender: #EDE9FE;
+    --bg-main: #FAFBFF;
+    --text-main: #0F172A;
+    --text-muted: #64748B;
+    --border-subtle: #E5E7EB;
+  }
+
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* Custom scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #CBD5E1;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94A3B8;
+  }
+}
+
+.font-editorial {
+  font-family: 'Newsreader', Georgia, serif;
+}
+
+.font-display {
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+}
+
+/* Glass & Card effects from design reference */
+.card-soft {
+  background: #FFFFFF;
+  border: 1px solid #EAEFF6;
+  box-shadow: 0 4px 20px -2px rgba(11, 42, 91, 0.04), 0 2px 6px -1px rgba(11, 42, 91, 0.02);
+  border-radius: 1.25rem;
+}
+
+.card-soft:hover {
+  box-shadow: 0 10px 25px -4px rgba(11, 42, 91, 0.08), 0 4px 10px -2px rgba(11, 42, 91, 0.04);
+}
+
+.navy-pill {
+  background-color: #0B2A5B;
+  color: #FFFFFF;
+  transition: all 0.2s ease-in-out;
+}
+
+.navy-pill:hover {
+  background-color: #123773;
+}
+
+.gold-glow {
+  filter: drop-shadow(0 4px 12px rgba(246, 181, 27, 0.35));
+}

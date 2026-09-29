@@ -17,6 +17,7 @@ import {
   FileCode,
   Loader2,
   Copy,
+  RefreshCw,
 } from 'lucide-react';
 import { Exam } from '../../types';
 
@@ -32,6 +33,12 @@ export const AdminExamReview: React.FC = () => {
   const [activating, setActivating] = useState(false);
   const [copiedPasskey, setCopiedPasskey] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
+
+  // Passkey Modal state
+  const [isPasskeyModalOpen, setIsPasskeyModalOpen] = useState(false);
+  const [newPasskey, setNewPasskey] = useState('');
+  const [passkeyError, setPasskeyError] = useState<string | null>(null);
+  const [passkeySaving, setPasskeySaving] = useState(false);
 
   const fetchExamDetails = useCallback(async () => {
     if (!examId) return;
@@ -204,6 +211,52 @@ export const AdminExamReview: React.FC = () => {
     setTimeout(() => setCopiedPasskey(false), 2000);
   };
 
+  const openPasskeyModal = () => {
+    setNewPasskey(exam?.passkey || '');
+    setPasskeyError(null);
+    setIsPasskeyModalOpen(true);
+  };
+
+  const handleGenerateRandomPasskey = () => {
+    const generated = String(Math.floor(1000 + Math.random() * 9000));
+    setNewPasskey(generated);
+    setPasskeyError(null);
+  };
+
+  const handleSavePasskey = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!examId) return;
+
+    const cleanPasskey = newPasskey.trim();
+    if (!/^\d{4}$/.test(cleanPasskey)) {
+      setPasskeyError('Passkey must be exactly 4 numeric digits (e.g. 9126).');
+      return;
+    }
+
+    try {
+      setPasskeySaving(true);
+      setPasskeyError(null);
+      const res = await fetch(`/api/admin/exams/${examId}/passkey`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passkey: cleanPasskey }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setPasskeyError(data.error || 'Failed to update passkey');
+        return;
+      }
+
+      setExam((prev) => (prev ? { ...prev, passkey: cleanPasskey } : null));
+      setIsPasskeyModalOpen(false);
+    } catch (err: any) {
+      setPasskeyError(err.message || 'Network error updating passkey');
+    } finally {
+      setPasskeySaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="py-20 flex flex-col items-center justify-center space-y-3 text-slate-400">
@@ -308,6 +361,15 @@ export const AdminExamReview: React.FC = () => {
                 title="Copy Passkey"
               >
                 {copiedPasskey ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                type="button"
+                onClick={openPasskeyModal}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-[#0B2A5B] bg-amber-50 hover:bg-amber-100 border border-amber-200/60 px-2 py-0.5 rounded-lg transition ml-1"
+                title="Change Passkey"
+              >
+                <Edit2 className="w-3 h-3 text-[#0B2A5B]" />
+                <span>Change</span>
               </button>
             </div>
           </div>
@@ -522,6 +584,117 @@ export const AdminExamReview: React.FC = () => {
                 {activating ? 'Activating...' : 'Activate Exam'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Change Passkey Modal */}
+      {isPasskeyModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 sm:p-7 max-w-md w-full space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                  <Key className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 font-display">
+                    Change Exam Passkey
+                  </h3>
+                  <p className="text-[11px] text-slate-500 line-clamp-1">
+                    {exam?.title}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPasskeyModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePasskey} className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-700">
+                    4-Digit Passkey
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGenerateRandomPasskey}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Generate Random</span>
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={newPasskey}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      setNewPasskey(val);
+                      if (passkeyError) setPasskeyError(null);
+                    }}
+                    placeholder="e.g. 9126"
+                    className="w-full text-center tracking-[0.5em] font-mono font-extrabold text-2xl py-3 px-4 rounded-xl border border-slate-300 focus:border-[#0B2A5B] focus:ring-2 focus:ring-blue-100 outline-none transition bg-slate-50 focus:bg-white text-slate-900"
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1.5 text-center">
+                  Enter 4 numeric digits candidates will use to unlock this assessment
+                </p>
+              </div>
+
+              {passkeyError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                  <span>{passkeyError}</span>
+                </div>
+              )}
+
+              <div className="p-3.5 rounded-xl bg-amber-50/60 border border-amber-100 text-xs space-y-1 text-slate-600">
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                  <span>Current Passkey: <strong className="font-mono text-slate-900">{exam?.passkey || 'None'}</strong></span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                  <span>Takes effect immediately for all students entering this assessment.</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsPasskeyModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={passkeySaving || newPasskey.trim().length !== 4}
+                  className="px-5 py-2.5 rounded-xl bg-[#0B2A5B] hover:bg-[#123773] disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer transition shadow-sm"
+                >
+                  {passkeySaving ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Save Passkey</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

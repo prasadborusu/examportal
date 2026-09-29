@@ -97,12 +97,50 @@ router.get('/exams/:id', async (req: Request, res: Response): Promise<void> => {
 
 router.put('/exams/:id', async (req: Request, res: Response): Promise<void> => {
   const id = req.params.id as string;
+  if (req.body.passkey !== undefined) {
+    const cleanPasskey = String(req.body.passkey).trim();
+    if (!/^\d{4}$/.test(cleanPasskey)) {
+      res.status(400).json({ error: 'Passkey must be exactly 4 numeric digits.' });
+      return;
+    }
+    const existing = await db.getActiveExamByPasskey(cleanPasskey);
+    if (existing && existing.id !== id) {
+      res.status(400).json({
+        error: `Passkey "${cleanPasskey}" is already in use by active assessment "${existing.title}". Please choose a different 4-digit passkey.`
+      });
+      return;
+    }
+    req.body.passkey = cleanPasskey;
+  }
   const updated = await db.updateExam(id, req.body);
   if (!updated) {
     res.status(404).json({ error: 'Exam not found' });
     return;
   }
   res.json(updated);
+});
+
+router.put('/exams/:id/passkey', async (req: Request, res: Response): Promise<void> => {
+  const id = req.params.id as string;
+  const { passkey } = req.body;
+  const cleanPasskey = String(passkey || '').trim();
+  if (!/^\d{4}$/.test(cleanPasskey)) {
+    res.status(400).json({ error: 'Passkey must be exactly 4 numeric digits.' });
+    return;
+  }
+  const existing = await db.getActiveExamByPasskey(cleanPasskey);
+  if (existing && existing.id !== id) {
+    res.status(400).json({
+      error: `Passkey "${cleanPasskey}" is already in use by active assessment "${existing.title}". Please choose a different 4-digit passkey.`
+    });
+    return;
+  }
+  const updated = await db.updateExam(id, { passkey: cleanPasskey });
+  if (!updated) {
+    res.status(404).json({ error: 'Exam not found' });
+    return;
+  }
+  res.json({ success: true, passkey: cleanPasskey, exam: updated });
 });
 
 router.delete('/exams/:id', async (req: Request, res: Response): Promise<void> => {

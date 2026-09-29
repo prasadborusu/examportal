@@ -2,27 +2,19 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
+import { BACKEND_URL } from './api/config'
 
-// Dynamic API URL for Vercel -> Render cross-origin deployment
-const DEFAULT_BACKEND_URL = 'https://examportal-a5f9.onrender.com';
-if (typeof window !== 'undefined' && !localStorage.getItem('ANVESHANA_API_URL')) {
-  localStorage.setItem('ANVESHANA_API_URL', DEFAULT_BACKEND_URL);
-}
-
-export const getApiBase = () => {
-  if (typeof window === 'undefined') return '';
-  const custom = localStorage.getItem('ANVESHANA_API_URL');
-  if (custom && custom.trim()) {
-    return custom.trim().replace(/\/+$/, '');
-  }
-  return (import.meta.env.VITE_API_URL || DEFAULT_BACKEND_URL).trim().replace(/\/+$/, '');
-};
-
+// Directly connect all frontend API calls to Render backend in code
 const originalFetch = window.fetch;
 window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-  const base = getApiBase();
-  if (base && typeof input === 'string' && input.startsWith('/api')) {
-    input = `${base}${input}`;
+  if (typeof input === 'string') {
+    if (input.startsWith('/api')) {
+      input = `${BACKEND_URL}${input}`;
+    }
+  } else if (input instanceof URL) {
+    if (input.pathname.startsWith('/api')) {
+      input = new URL(`${BACKEND_URL}${input.pathname}${input.search}`);
+    }
   }
   return originalFetch(input, init);
 };

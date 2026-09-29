@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Copy, Check, Save, ArrowLeft, AlertTriangle, Loader2, Link2 } from 'lucide-react';
+import { RefreshCw, Copy, Check, ArrowLeft, AlertTriangle, Loader2 } from 'lucide-react';
+import { BACKEND_URL } from '../../api/config';
 
 export const AdminCreateExam: React.FC = () => {
   const navigate = useNavigate();
@@ -16,9 +17,6 @@ export const AdminCreateExam: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [backendUrlInput, setBackendUrlInput] = useState(
-    () => localStorage.getItem('ANVESHANA_API_URL') || (import.meta.env.VITE_API_URL || 'https://examportal-a5f9.onrender.com')
-  );
 
   const handleCopy = () => {
     navigator.clipboard.writeText(passkey);
@@ -26,32 +24,14 @@ export const AdminCreateExam: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleSaveBackendUrl = (urlToSave?: string) => {
-    const val = (urlToSave || backendUrlInput).trim().replace(/\/+$/, '');
-    if (!val) {
-      localStorage.removeItem('ANVESHANA_API_URL');
-      setError('Cleared custom backend URL. Reverted to default.');
-      return;
-    }
-    localStorage.setItem('ANVESHANA_API_URL', val);
-    setError(null);
-    // Trigger submission with new URL
-    handleSubmitDirect(val);
-  };
-
-  const handleSubmitDirect = async (overrideUrl?: string) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!title.trim()) return;
 
     setLoading(true);
     setError(null);
     try {
-      const baseUrl =
-        overrideUrl ||
-        localStorage.getItem('ANVESHANA_API_URL') ||
-        (import.meta.env.VITE_API_URL || 'https://examportal-a5f9.onrender.com').trim().replace(/\/+$/, '');
-      const endpoint = `${baseUrl}/api/admin/exams`;
-
-      const res = await fetch(endpoint, {
+      const res = await fetch(`${BACKEND_URL}/api/admin/exams`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -66,13 +46,6 @@ export const AdminCreateExam: React.FC = () => {
         }),
       });
 
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error(
-          'Received HTML instead of JSON from server. Your Vercel frontend is not yet connected to your Render backend API.'
-        );
-      }
-
       if (!res.ok) {
         const errorData = await res.json().catch(() => null);
         throw new Error(errorData?.error || `Server returned error status ${res.status}`);
@@ -86,11 +59,6 @@ export const AdminCreateExam: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    handleSubmitDirect();
   };
 
   return (
@@ -113,39 +81,10 @@ export const AdminCreateExam: React.FC = () => {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-8 space-y-6">
-        {/* Backend Connection Error Banner & Direct URL Connector */}
         {error && (
-          <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-3">
-            <div className="flex items-center gap-2 font-bold text-sm text-rose-900">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>Backend Connection Notice</span>
-            </div>
-            <p className="leading-relaxed opacity-90">{error}</p>
-            <div className="p-3 bg-white rounded-xl border border-rose-200/80 space-y-2">
-              <label className="font-semibold text-slate-700 flex items-center gap-1.5">
-                <Link2 className="w-3.5 h-3.5 text-blue-600" />
-                <span>Render Backend API URL:</span>
-              </label>
-              <div className="flex flex-col sm:flex-row items-center gap-2">
-                <input
-                  type="url"
-                  placeholder="https://anveshana-backend.onrender.com"
-                  value={backendUrlInput}
-                  onChange={(e) => setBackendUrlInput(e.target.value)}
-                  className="flex-1 w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs focus:outline-none focus:border-blue-500 font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleSaveBackendUrl()}
-                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-[#0B2A5B] text-white font-bold hover:bg-blue-900 transition whitespace-nowrap cursor-pointer text-xs"
-                >
-                  Save & Connect
-                </button>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Tip: Paste your Render web service URL here. It will save to your browser and connect immediately without requiring a redeploy.
-              </p>
-            </div>
+          <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{error}</span>
           </div>
         )}
 
@@ -168,19 +107,17 @@ export const AdminCreateExam: React.FC = () => {
             <label className="font-semibold text-slate-700">Description</label>
             <textarea
               rows={3}
-              placeholder="Brief details about problem topics, eligibility, or rules..."
+              placeholder="Provide instructions, topics covered, and guidelines for students..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-[#0B2A5B]"
             />
           </div>
 
-          {/* Passkey Generator Section (Requirement 19) */}
-          <div className="p-5 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-3">
-            <label className="font-bold text-slate-800 text-xs block">
-              Exam Passkey (4 Digits)
-            </label>
-            <p className="text-slate-500 text-[11px]">
+          {/* Passkey */}
+          <div className="p-5 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-3">
+            <label className="font-bold text-amber-900 text-sm block">Exam Passkey (4 Digits)</label>
+            <p className="text-amber-800/80 leading-relaxed text-[11px]">
               Students will enter this passkey to verify and begin their proctored exam.
             </p>
             <div className="flex items-center gap-3">
@@ -190,7 +127,7 @@ export const AdminCreateExam: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPasskey(generatePasskey())}
-                className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold flex items-center gap-1.5 transition"
+                className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold flex items-center gap-1.5 transition cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
                 <span>Regenerate</span>
@@ -198,7 +135,7 @@ export const AdminCreateExam: React.FC = () => {
               <button
                 type="button"
                 onClick={handleCopy}
-                className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold flex items-center gap-1.5 transition"
+                className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold flex items-center gap-1.5 transition cursor-pointer"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
                 <span>{copied ? 'Copied' : 'Copy'}</span>
@@ -250,7 +187,7 @@ export const AdminCreateExam: React.FC = () => {
             <button
               type="button"
               onClick={() => navigate('/admin/exams')}
-              className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold"
+              className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold cursor-pointer"
             >
               Cancel
             </button>

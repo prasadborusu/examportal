@@ -568,6 +568,43 @@ class Database {
       this.store.sections = [];
     }
     this.save();
+
+    // Auto-seed default exams and questions to Supabase if Supabase is connected but empty
+    this.syncInitialDataToSupabaseIfEmpty();
+  }
+
+  async syncInitialDataToSupabaseIfEmpty() {
+    if (!isSupabaseConfigured || !supabase) return;
+    try {
+      const { count } = await supabase.from('exams').select('*', { count: 'exact', head: true });
+      if (count === 0) {
+        console.log('[ANVESHANA DB] Supabase database has 0 exams. Seeding initial assessment and questions...');
+        const init = getInitialData();
+        for (const exam of init.exams) {
+          await supabase.from('exams').upsert([exam]);
+        }
+        for (const q of init.questions) {
+          await supabase.from('questions').upsert([{
+            id: q.id,
+            exam_id: q.exam_id,
+            title: q.title,
+            description: q.description,
+            difficulty: q.difficulty,
+            marks: q.marks,
+            order_number: q.order_number,
+            starter_templates: q.starter_templates,
+            question_type: q.question_type || 'CODING',
+            created_at: q.created_at,
+          }]);
+        }
+        for (const tc of init.testCases) {
+          await supabase.from('test_cases').upsert([tc]);
+        }
+        console.log('[ANVESHANA DB] Initial assessment and questions seeded to Supabase.');
+      }
+    } catch (e) {
+      console.error('[ANVESHANA DB] Error syncing initial data to Supabase:', e);
+    }
   }
 
   private save() {

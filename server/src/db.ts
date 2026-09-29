@@ -595,12 +595,14 @@ class Database {
         .from('exams')
         .select('*')
         .eq('passkey', passkey)
-        .in('status', ['LIVE', 'ACTIVE', 'SCHEDULED'])
+        .in('status', ['LIVE', 'ACTIVE', 'SCHEDULED', 'DRAFT'])
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
       if (!error && data) return data as Exam;
     }
     return this.store.exams.find(
-      (e) => (e.status === 'LIVE' || e.status === 'ACTIVE' || e.status === 'SCHEDULED') && e.passkey === passkey
+      (e) => (e.status === 'LIVE' || e.status === 'ACTIVE' || e.status === 'SCHEDULED' || e.status === 'DRAFT') && e.passkey === passkey
     );
   }
 

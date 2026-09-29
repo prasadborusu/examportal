@@ -28,8 +28,14 @@ import {
   Terminal,
   Lock,
   Copy,
+  Radio,
+  Circle,
+  Layers,
+  Send,
+  Info,
+  ListChecks,
 } from 'lucide-react';
-import { Question, Submission, SubmissionStatus } from '../types';
+import { Question, Submission, SubmissionStatus, Section } from '../types';
 
 export const ExamInterface: React.FC = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
@@ -41,6 +47,19 @@ export const ExamInterface: React.FC = () => {
   const [participant, setParticipant] = useState<any>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+
+  // Section states
+  const [sections, setSections] = useState<Section[]>([]);
+  const [currentSectionId, setCurrentSectionId] = useState<string | null>(null);
+  const [sectionStates, setSectionStates] = useState<Record<string, { status: string; started_at?: string; submitted_at?: string }>>({});
+  const [sectionTimeRemainingSeconds, setSectionTimeRemainingSeconds] = useState<number | null>(null);
+  const [showSectionIntro, setShowSectionIntro] = useState<boolean>(false);
+  const [showSubmitSectionModal, setShowSubmitSectionModal] = useState<boolean>(false);
+  const [isSubmittingSection, setIsSubmittingSection] = useState<boolean>(false);
+
+  // MCQ state
+  const [selectedMcqOptionId, setSelectedMcqOptionId] = useState<Record<string, string>>({});
+  const [isSavingMcq, setIsSavingMcq] = useState<boolean>(false);
 
   // Editor and language state
   const [selectedLanguage, setSelectedLanguage] = useState<'java' | 'cpp' | 'python' | 'c'>('java');
@@ -145,18 +164,49 @@ export const ExamInterface: React.FC = () => {
       setViolationCount(data.participant.violations_count || 0);
       setMaxViolations(data.exam.max_violations || 3);
 
+      // Populate sections and section states
+      const loadedSections: Section[] = data.sections || [];
+      setSections(loadedSections);
+      const states = data.sectionStates || {};
+      setSectionStates(states);
+
+      const activeSecId = data.currentSectionId || (loadedSections[0]?.id ?? null);
+      setCurrentSectionId(activeSecId);
+
+      if (typeof data.sectionTimeRemainingSeconds === 'number') {
+        setSectionTimeRemainingSeconds(data.sectionTimeRemainingSeconds);
+      } else {
+        setSectionTimeRemainingSeconds(null);
+      }
+
+      // Check if section intro should be shown
+      if (
+        data.exam?.exam_type === 'SECTIONAL' &&
+        activeSecId &&
+        states[activeSecId]?.status === 'NOT_STARTED'
+      ) {
+        setShowSectionIntro(true);
+      }
+
       // Populate starter codes or previous submissions
       const initialCodes: Record<string, Record<string, string>> = {};
       const subsMap: Record<string, Submission> = {};
+      const mcqSelections: Record<string, string> = {};
 
       if (Array.isArray(data.submissions)) {
         for (const sub of data.submissions) {
           subsMap[sub.question_id] = sub;
+          if (sub.selected_option_id) {
+            mcqSelections[sub.question_id] = sub.selected_option_id;
+          } else if (sub.question_type === 'MCQ' && sub.code) {
+            mcqSelections[sub.question_id] = sub.code;
+          }
         }
       }
       setSubmissionsByQuestion(subsMap);
+      setSelectedMcqOptionId(mcqSelections);
 
-      for (const q of data.questions) {
+      for (const q of data.questions || []) {
         initialCodes[q.id] = {
           java: q.starter_templates?.java || '// Write Java code here\npublic class Main {\n    public static void main(String[] args) {\n        \n    }\n}',
           cpp: q.starter_templates?.cpp || '// Write C++ code here\n#include <iostream>\nusing namespace std;\n\nint main() {\n    return 0;\n}',
@@ -165,9 +215,11 @@ export const ExamInterface: React.FC = () => {
         };
 
         // If there's an existing submission code, load that
-        if (subsMap[q.id]) {
+        if (subsMap[q.id] && subsMap[q.id].code) {
           const subLang = subsMap[q.id].language as 'java' | 'cpp' | 'python' | 'c';
-          initialCodes[q.id][subLang] = subsMap[q.id].code;
+          if (initialCodes[q.id][subLang] !== undefined) {
+            initialCodes[q.id][subLang] = subsMap[q.id].code || '';
+          }
         }
       }
       setCodePerQuestion(initialCodes);
@@ -187,7 +239,7 @@ export const ExamInterface: React.FC = () => {
     loadExamSession();
   }, [loadExamSession]);
 
-  // 2. Server-Authoritative Timer Countdown
+  // 2. Server-Authoritative Overall Exam Timer Countdown
   useEffect(() => {
     if (loading || timeRemainingSeconds <= 0) return;
 
@@ -312,8 +364,15 @@ export const ExamInterface: React.FC = () => {
     };
   }, [recordViolation]);
 
-  // Current question and code getters
-  const currentQuestion = questions[currentQuestionIndex];
+  // Determine active section & active questions
+  const isSectional = exam?.exam_type === 'SECTIONAL' && sections.length > 0;
+  const activeSection = isSectional && currentSectionId ? sections.find((s) => s.id === currentSectionId) : null;
+  const activeQuestions = isSectional && currentSectionId
+    ? questions.filter((q) => q.section_id === currentSectionId)
+    : questions;
+
+  const safeQuestionIndex = Math.min(currentQuestionIndex, Math.max(0, activeQuestions.length - 1));
+  const currentQuestion = activeQuestions[safeQuestionIndex];
   const currentCode = currentQuestion
     ? codePerQuestion[currentQuestion.id]?.[selectedLanguage] || ''
     : '';
@@ -515,6 +574,249 @@ export const ExamInterface: React.FC = () => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // ----------------------------------------------------
+  // Section-specific Countdown Timer (Auto-submits section at 00:00)
+  // ----------------------------------------------------
+  const handleAutoSubmitSection = useCallback(async () => {
+    if (!attemptId || !currentSectionId) return;
+    try {
+      const res = await fetch(`/api/exam/${attemptId}/sections/${currentSectionId}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoExpired: true }),
+      });
+      const data = await res.json();
+      setShowSubmitSectionModal(false);
+
+      if (data.sectionStates) {
+        setSectionStates(data.sectionStates);
+      }
+
+      if (data.isLastSection) {
+        alert('Section time expired! All sections have been completed. Finalizing assessment.');
+        await handleFinalSubmit('TIME_EXPIRED');
+      } else if (data.nextSectionId) {
+        setCurrentSectionId(data.nextSectionId);
+        setCurrentQuestionIndex(0);
+        const nextSec = sections.find((s) => s.id === data.nextSectionId);
+        if (nextSec && nextSec.duration_minutes && nextSec.duration_minutes > 0) {
+          setSectionTimeRemainingSeconds(nextSec.duration_minutes * 60);
+        } else {
+          setSectionTimeRemainingSeconds(null);
+        }
+        setShowSectionIntro(true);
+      }
+    } catch (err) {
+      console.error('Failed to auto-submit section:', err);
+    }
+  }, [attemptId, currentSectionId, sections]);
+
+  useEffect(() => {
+    if (loading || sectionTimeRemainingSeconds === null || sectionTimeRemainingSeconds <= 0 || showSectionIntro) return;
+
+    const timer = setInterval(() => {
+      setSectionTimeRemainingSeconds((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          clearInterval(timer);
+          handleAutoSubmitSection();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [loading, sectionTimeRemainingSeconds, showSectionIntro, handleAutoSubmitSection]);
+
+  // Start Section handler
+  const handleStartSection = async () => {
+    if (!attemptId || !currentSectionId) return;
+    try {
+      const res = await fetch(`/api/exam/${attemptId}/sections/${currentSectionId}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (data.sectionStates) {
+        setSectionStates(data.sectionStates);
+      }
+      if (activeSection && activeSection.duration_minutes && activeSection.duration_minutes > 0) {
+        setSectionTimeRemainingSeconds(activeSection.duration_minutes * 60);
+      }
+      setShowSectionIntro(false);
+    } catch (err) {
+      console.error('Failed to start section:', err);
+      setShowSectionIntro(false);
+    }
+  };
+
+  // Submit Section handler
+  const handleSectionSubmit = async (autoExpired = false) => {
+    if (!attemptId || !currentSectionId) return;
+    setIsSubmittingSection(true);
+    try {
+      const res = await fetch(`/api/exam/${attemptId}/sections/${currentSectionId}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoExpired }),
+      });
+      const data = await res.json();
+      setShowSubmitSectionModal(false);
+
+      if (data.sectionStates) {
+        setSectionStates(data.sectionStates);
+      }
+
+      if (data.isLastSection) {
+        alert(autoExpired ? 'Section time expired! All sections have been completed. Finalizing assessment.' : 'All sections have been completed. Submitting your final assessment.');
+        await handleFinalSubmit('ALL_SECTIONS_COMPLETED');
+      } else if (data.nextSectionId) {
+        setCurrentSectionId(data.nextSectionId);
+        setCurrentQuestionIndex(0);
+        const nextSec = sections.find((s) => s.id === data.nextSectionId);
+        if (nextSec && nextSec.duration_minutes && nextSec.duration_minutes > 0) {
+          setSectionTimeRemainingSeconds(nextSec.duration_minutes * 60);
+        } else {
+          setSectionTimeRemainingSeconds(null);
+        }
+        setShowSectionIntro(true);
+      }
+    } catch (err) {
+      console.error('Failed to submit section:', err);
+    } finally {
+      setIsSubmittingSection(false);
+    }
+  };
+
+  // Switch Section from Navigation Bar
+  const handleSwitchSection = (targetSection: Section) => {
+    if (targetSection.id === currentSectionId) return;
+
+    const targetState = sectionStates[targetSection.id]?.status || 'NOT_STARTED';
+    if (targetState === 'LOCKED') {
+      alert('This section is locked and cannot be reopened.');
+      return;
+    }
+
+    const currentIdx = sections.findIndex((s) => s.id === currentSectionId);
+    const targetIdx = sections.findIndex((s) => s.id === targetSection.id);
+    const isSequential = (activeSection?.navigation_mode || 'FREE') === 'SEQUENTIAL';
+
+    if (isSequential && targetIdx > currentIdx) {
+      alert('Sequential navigation: please complete and submit your current section before proceeding to the next section.');
+      return;
+    }
+
+    if (targetIdx < currentIdx && activeSection?.allow_previous_section === false) {
+      alert('Returning to previous sections is disabled for this assessment.');
+      return;
+    }
+
+    setCurrentSectionId(targetSection.id);
+    setCurrentQuestionIndex(0);
+
+    if (targetSection.duration_minutes && targetSection.duration_minutes > 0) {
+      const startedAt = sectionStates[targetSection.id]?.started_at;
+      if (startedAt) {
+        const elapsed = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+        setSectionTimeRemainingSeconds(Math.max(0, targetSection.duration_minutes * 60 - elapsed));
+      } else {
+        setSectionTimeRemainingSeconds(targetSection.duration_minutes * 60);
+      }
+    } else {
+      setSectionTimeRemainingSeconds(null);
+    }
+
+    if (targetState === 'NOT_STARTED') {
+      setShowSectionIntro(true);
+    } else {
+      setShowSectionIntro(false);
+    }
+  };
+
+  // MCQ Selection and Submission Handlers
+  const handleSelectMcqOption = (optionId: string) => {
+    if (!currentQuestion) return;
+    setSelectedMcqOptionId((prev) => ({
+      ...prev,
+      [currentQuestion.id]: optionId,
+    }));
+  };
+
+  const handleSaveMcqAnswer = async (advanceNext = false) => {
+    if (!attemptId || !currentQuestion) return;
+    setIsSavingMcq(true);
+    try {
+      const optId = selectedMcqOptionId[currentQuestion.id] || '';
+      const res = await fetch(`/api/exam/${attemptId}/mcq-submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionId: currentQuestion.id,
+          selectedOptionId: optId,
+        }),
+      });
+      const data = await res.json();
+
+      const newSub: Submission = {
+        id: data.submissionId || `sub-${Date.now()}`,
+        participant_id: attemptId,
+        question_id: currentQuestion.id,
+        section_id: currentQuestion.section_id || undefined,
+        question_type: 'MCQ',
+        language: 'mcq',
+        code: optId,
+        selected_option_id: optId,
+        status: data.status,
+        score: data.score,
+        passed_test_cases: data.score > 0 ? 1 : 0,
+        total_test_cases: 1,
+        execution_time_ms: 0,
+        memory_kb: 0,
+        submitted_at: new Date().toISOString(),
+      };
+
+      setSubmissionsByQuestion((prev) => ({
+        ...prev,
+        [currentQuestion.id]: newSub,
+      }));
+
+      if (advanceNext && safeQuestionIndex < activeQuestions.length - 1) {
+        setCurrentQuestionIndex((prev) => prev + 1);
+      }
+    } catch (err) {
+      console.error('Failed to save MCQ answer:', err);
+    } finally {
+      setIsSavingMcq(false);
+    }
+  };
+
+  const handleClearMcqSelection = async () => {
+    if (!attemptId || !currentQuestion) return;
+    setSelectedMcqOptionId((prev) => ({
+      ...prev,
+      [currentQuestion.id]: '',
+    }));
+    try {
+      await fetch(`/api/exam/${attemptId}/mcq-submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionId: currentQuestion.id,
+          selectedOptionId: '',
+        }),
+      });
+      setSubmissionsByQuestion((prev) => {
+        const copy = { ...prev };
+        delete copy[currentQuestion.id];
+        return copy;
+      });
+    } catch (err) {
+      console.error('Failed to clear answer:', err);
+    }
+  };
+
   if (loading) {
     return (
       <div className="h-screen flex flex-col items-center justify-center gap-4 bg-slate-50">
@@ -527,7 +829,8 @@ export const ExamInterface: React.FC = () => {
   return (
     <div className="h-screen flex flex-col bg-[#F8FAFC] overflow-hidden select-none">
       {/* =================================================== */}
-      {/* TOP BAR (Matches Reference Exam UI) */}
+      {/* =================================================== */}
+      {/* TOP BAR (Matches Reference Exam UI & Requirements) */}
       {/* =================================================== */}
       <header className="h-14 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between z-30 shrink-0 shadow-xs">
         {/* Left: Hamburger + Logo + Assessment Title */}
@@ -540,12 +843,17 @@ export const ExamInterface: React.FC = () => {
           <div className="h-5 w-[1px] bg-slate-200" />
           <div className="hidden sm:block">
             <h1 className="text-xs sm:text-sm font-bold text-slate-900 tracking-tight">
-              Coding Assessment
+              {exam?.title || 'Coding Assessment'}
             </h1>
+            {isSectional && activeSection && (
+              <span className="text-[11px] font-semibold text-blue-600 block leading-tight">
+                Section {activeSection.order_number || (sections.findIndex((s) => s.id === activeSection.id) + 1)}: {activeSection.name}
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Center: Student Name & Roll Number */}
+        {/* Center: Student Name & Roll Number + Current Question Counter */}
         <div className="hidden md:flex items-center gap-4 text-xs">
           <div className="flex items-center gap-1.5 text-slate-600">
             <span className="text-slate-400">Name:</span>
@@ -557,6 +865,13 @@ export const ExamInterface: React.FC = () => {
               {participant?.roll_number || '---'}
             </span>
           </div>
+          {activeQuestions.length > 0 && !showSectionIntro && (
+            <div className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold text-[11px]">
+              {isSectional && activeSection
+                ? `Section ${activeSection.order_number || (sections.findIndex((s) => s.id === activeSection.id) + 1)} — Q${safeQuestionIndex + 1} of ${activeQuestions.length}`
+                : `Question ${safeQuestionIndex + 1} of ${activeQuestions.length}`}
+            </div>
+          )}
         </div>
 
         {/* Right: Timer & End Exam Button */}
@@ -590,62 +905,245 @@ export const ExamInterface: React.FC = () => {
       </header>
 
       {/* =================================================== */}
-      {/* MAIN THREE-COLUMN WORKSPACE */}
+      {/* SECTION NAVIGATION BAR (Requirement 12 & 21) */}
       {/* =================================================== */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* ------------------------------------------------- */}
-        {/* COLUMN 1: QUESTION NAVIGATOR (Left) */}
-        {/* ------------------------------------------------- */}
-        <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-            <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Questions ({questions.length})
-            </h2>
-          </div>
-
-          {/* Question List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {questions.map((q, idx) => {
-              const isCurrent = idx === currentQuestionIndex;
-              const sub = submissionsByQuestion[q.id];
-              const isAnswered = sub && sub.status === 'Accepted';
-              const isPartial = sub && sub.status === 'Partial Score';
-              const isReviewed = markedForReview[q.id];
+      {isSectional && (
+        <nav className="h-11 bg-slate-900 border-b border-slate-800 px-4 sm:px-6 flex items-center justify-between overflow-x-auto text-xs shrink-0 select-none z-20">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px] mr-1 hidden sm:inline">
+              Sections:
+            </span>
+            {sections.map((sec, idx) => {
+              const isCurrent = sec.id === currentSectionId;
+              const state = sectionStates[sec.id]?.status || 'NOT_STARTED';
+              const isLocked = state === 'LOCKED';
+              const isCompleted = state === 'COMPLETED';
+              const secQuestions = questions.filter((q) => q.section_id === sec.id);
 
               return (
                 <button
-                  key={q.id}
-                  onClick={() => setCurrentQuestionIndex(idx)}
-                  className={`w-full text-left p-3 rounded-xl text-xs font-medium transition-all flex items-center gap-3 cursor-pointer ${
+                  key={sec.id}
+                  onClick={() => handleSwitchSection(sec)}
+                  disabled={isLocked}
+                  className={`flex items-center gap-2 px-3 py-1 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                     isCurrent
-                      ? 'bg-blue-50/90 border border-blue-200 text-[#0B2A5B] font-semibold shadow-xs'
-                      : 'hover:bg-slate-50 border border-transparent text-slate-700'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : isCompleted
+                      ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800/80 hover:bg-emerald-900/60'
+                      : isLocked
+                      ? 'bg-slate-800/40 text-slate-500 border border-slate-800 cursor-not-allowed opacity-60'
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700/80'
                   }`}
                 >
-                  {/* Status number badge */}
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 ${
-                      isAnswered
-                        ? 'bg-emerald-600 text-white'
-                        : isPartial
-                        ? 'bg-amber-500 text-white'
-                        : isCurrent
-                        ? 'bg-[#0B2A5B] text-white'
-                        : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {isAnswered ? <Check className="w-3.5 h-3.5" /> : idx + 1}
-                  </div>
-
-                  <span className="truncate flex-1">{q.title}</span>
-
-                  {isReviewed && (
-                    <Bookmark className="w-3.5 h-3.5 text-amber-500 fill-amber-500 shrink-0" />
+                  {/* Status Indicator (Lucide Icons) */}
+                  {isCompleted ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  ) : isCurrent ? (
+                    <Radio className="w-3.5 h-3.5 text-white shrink-0 animate-pulse" />
+                  ) : isLocked ? (
+                    <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  ) : (
+                    <Circle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   )}
+
+                  <span>{idx + 1}. {sec.name}</span>
+
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-normal ${
+                    isCurrent ? 'bg-blue-700 text-blue-100' : 'bg-slate-900/80 text-slate-400'
+                  }`}>
+                    {sec.question_type} • {secQuestions.length}
+                  </span>
                 </button>
               );
             })}
           </div>
+
+          <div className="flex items-center gap-3 shrink-0 ml-4">
+            {sectionTimeRemainingSeconds !== null && (
+              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold ${
+                sectionTimeRemainingSeconds < 300
+                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500 animate-pulse'
+                  : 'bg-blue-950/80 text-blue-300 border border-blue-800'
+              }`}>
+                <Clock className="w-3.5 h-3.5 text-blue-400" />
+                <span>Section: {formatTime(sectionTimeRemainingSeconds)}</span>
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowSubmitSectionModal(true)}
+              className="px-3 py-1 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Submit Section</span>
+            </button>
+          </div>
+        </nav>
+      )}
+
+      {/* =================================================== */}
+      {/* MAIN WORKSPACE OR SECTION INTRODUCTION */}
+      {/* =================================================== */}
+      {showSectionIntro && activeSection ? (
+        <div className="flex-1 flex items-center justify-center p-6 bg-slate-50 overflow-y-auto">
+          <div className="max-w-2xl w-full bg-white rounded-3xl p-8 sm:p-10 border border-slate-200/90 shadow-xl space-y-8 animate-fadeIn">
+            {/* Header */}
+            <div className="space-y-3 text-center">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-[#0B2A5B] border border-blue-100 uppercase tracking-widest">
+                Section {activeSection.order_number || (sections.findIndex((s) => s.id === activeSection.id) + 1)}
+              </div>
+              <h2 className="text-3xl font-black text-slate-900 tracking-tight font-display">
+                {activeSection.name}
+              </h2>
+              {activeSection.description && (
+                <p className="text-sm text-slate-600 max-w-lg mx-auto">
+                  {activeSection.description}
+                </p>
+              )}
+            </div>
+
+            {/* Metric Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Question Type</span>
+                <span className="text-sm font-bold text-[#0B2A5B]">{activeSection.question_type}</span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Questions</span>
+                <span className="text-sm font-bold text-slate-800">{activeQuestions.length}</span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Marks</span>
+                <span className="text-sm font-bold text-emerald-600">
+                  {activeSection.total_marks || activeQuestions.reduce((sum, q) => sum + q.marks, 0)}
+                </span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Duration</span>
+                <span className="text-sm font-bold text-amber-600">
+                  {activeSection.duration_minutes ? `${activeSection.duration_minutes} Minutes` : 'Untimed'}
+                </span>
+              </div>
+            </div>
+
+            {/* Instructions */}
+            <div className="p-5 rounded-2xl bg-blue-50/50 border border-blue-100 space-y-3 text-xs text-slate-700">
+              <h4 className="font-bold text-[#0B2A5B] uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                <Info className="w-4 h-4 text-blue-600" />
+                <span>Section Guidelines & Rules</span>
+              </h4>
+              <ul className="space-y-2 list-disc list-inside text-slate-600 leading-relaxed">
+                {activeSection.question_type === 'MCQ' && (
+                  <>
+                    <li>Each question has multiple choices with <strong>exactly one correct answer</strong>.</li>
+                    <li>Select an option and click <strong>Save Answer</strong> to record your response.</li>
+                    <li>Unanswered questions receive 0 marks.</li>
+                  </>
+                )}
+                {activeSection.question_type === 'CODING' && (
+                  <>
+                    <li>Write and test your code in Java, C++, Python, or C.</li>
+                    <li>Click <strong>Run Code</strong> to test against public test cases.</li>
+                    <li>Click <strong>Submit Solution</strong> to run evaluation against all public and hidden test cases.</li>
+                  </>
+                )}
+                {activeSection.question_type === 'MIXED' && (
+                  <>
+                    <li>This section contains both <strong>Multiple Choice Questions</strong> and <strong>Coding Problems</strong>.</li>
+                    <li>Navigate using the left question index to select problems.</li>
+                  </>
+                )}
+                <li>
+                  Navigation Mode: <strong>{activeSection.navigation_mode === 'SEQUENTIAL' ? 'Sequential Navigation' : 'Free Navigation'}</strong>.
+                </li>
+                {activeSection.lock_after_submission ? (
+                  <li className="text-rose-600 font-semibold">
+                    Warning: Once you submit this section, it will be locked and cannot be reopened.
+                  </li>
+                ) : (
+                  <li className="text-slate-600">
+                    You can return to review this section before the final assessment submission.
+                  </li>
+                )}
+              </ul>
+            </div>
+
+            {/* Start Section Button */}
+            <button
+              onClick={handleStartSection}
+              className="w-full py-3.5 rounded-2xl text-sm font-bold bg-[#0B2A5B] hover:bg-[#123773] text-white transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              <span>Start Section</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex overflow-hidden">
+          {/* ------------------------------------------------- */}
+          {/* COLUMN 1: QUESTION NAVIGATOR (Left) */}
+          {/* ------------------------------------------------- */}
+          <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Questions ({activeQuestions.length})
+              </h2>
+              {isSectional && activeSection && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700">
+                  {activeSection.question_type}
+                </span>
+              )}
+            </div>
+
+            {/* Question List */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {activeQuestions.map((q, idx) => {
+                const isCurrent = idx === safeQuestionIndex;
+                const sub = submissionsByQuestion[q.id];
+                const isAnswered = sub && (sub.status === 'Accepted' || (q.question_type === 'MCQ' && (sub.selected_option_id || sub.code)));
+                const isPartial = sub && sub.status === 'Partial Score';
+                const isReviewed = markedForReview[q.id];
+
+                return (
+                  <button
+                    key={q.id}
+                    onClick={() => setCurrentQuestionIndex(idx)}
+                    className={`w-full text-left p-3 rounded-xl text-xs font-medium transition-all flex items-center gap-3 cursor-pointer ${
+                      isCurrent
+                        ? 'bg-blue-50/90 border border-blue-200 text-[#0B2A5B] font-semibold shadow-xs'
+                        : 'hover:bg-slate-50 border border-transparent text-slate-700'
+                    }`}
+                  >
+                    {/* Status number badge */}
+                    <div
+                      className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 ${
+                        isAnswered
+                          ? 'bg-emerald-600 text-white'
+                          : isPartial
+                          ? 'bg-amber-500 text-white'
+                          : isCurrent
+                          ? 'bg-[#0B2A5B] text-white'
+                          : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {isAnswered ? <Check className="w-3.5 h-3.5" /> : idx + 1}
+                    </div>
+
+                    <span className="truncate flex-1">{q.title}</span>
+
+                    <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
+                      q.question_type === 'MCQ' ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'
+                    }`}>
+                      {q.question_type || 'CODE'}
+                    </span>
+
+                    {isReviewed && (
+                      <Bookmark className="w-3.5 h-3.5 text-amber-500 fill-amber-500 shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
 
           {/* Mark for review button */}
           {currentQuestion && (
@@ -762,7 +1260,7 @@ export const ExamInterface: React.FC = () => {
               {/* Question Navigation Footer */}
               <div className="pt-6 border-t border-slate-100 flex items-center justify-between text-xs">
                 <button
-                  disabled={currentQuestionIndex === 0}
+                  disabled={safeQuestionIndex === 0}
                   onClick={() => setCurrentQuestionIndex((prev) => Math.max(0, prev - 1))}
                   className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent flex items-center gap-1 cursor-pointer"
                 >
@@ -770,11 +1268,11 @@ export const ExamInterface: React.FC = () => {
                   <span>Previous</span>
                 </button>
                 <span className="text-slate-400">
-                  {currentQuestionIndex + 1} of {questions.length}
+                  {safeQuestionIndex + 1} of {activeQuestions.length}
                 </span>
                 <button
-                  disabled={currentQuestionIndex === questions.length - 1}
-                  onClick={() => setCurrentQuestionIndex((prev) => Math.min(questions.length - 1, prev + 1))}
+                  disabled={safeQuestionIndex === activeQuestions.length - 1}
+                  onClick={() => setCurrentQuestionIndex((prev) => Math.min(activeQuestions.length - 1, prev + 1))}
                   className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent flex items-center gap-1 cursor-pointer"
                 >
                   <span>Next</span>
@@ -788,9 +1286,157 @@ export const ExamInterface: React.FC = () => {
         </section>
 
         {/* ------------------------------------------------- */}
-        {/* COLUMN 3: MONACO CODE EDITOR & OUTPUT (Right) */}
+        {/* COLUMN 3: RESPONSE WORKSPACE (Right) */}
+        {/* If question_type === 'MCQ', render MCQ Card. If 'CODING', render Monaco Editor */}
         {/* ------------------------------------------------- */}
-        <main className="flex-1 flex flex-col bg-[#1E1E1E] overflow-hidden">
+        {currentQuestion?.question_type === 'MCQ' ? (
+          <main className="flex-1 flex flex-col bg-[#F8FAFC] overflow-y-auto">
+            {/* Top Toolbar */}
+            <div className="h-11 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-100">
+                  MULTIPLE CHOICE QUESTION
+                </span>
+                {currentQuestion.negative_marks ? (
+                  <span className="text-[11px] text-rose-600 font-medium">
+                    (Negative Marking: -{currentQuestion.negative_marks} on incorrect answer)
+                  </span>
+                ) : null}
+              </div>
+
+              {submissionsByQuestion[currentQuestion.id] && (
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Response Recorded</span>
+                </div>
+              )}
+            </div>
+
+            {/* Options Selection Body */}
+            <div className="flex-1 p-6 sm:p-10 max-w-3xl w-full mx-auto space-y-6">
+              <div className="space-y-1">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Options
+                </span>
+                <p className="text-sm font-semibold text-slate-800">
+                  Select the single best answer for this question:
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {currentQuestion.options && currentQuestion.options.length > 0 ? (
+                  currentQuestion.options.map((opt, optIdx) => {
+                    const letter = String.fromCharCode(65 + optIdx);
+                    const isSelected = selectedMcqOptionId[currentQuestion.id] === opt.id;
+
+                    return (
+                      <label
+                        key={opt.id || optIdx}
+                        onClick={() => handleSelectMcqOption(opt.id)}
+                        className={`flex items-start gap-4 p-4 sm:p-5 rounded-2xl border transition-all cursor-pointer select-none ${
+                          isSelected
+                            ? 'bg-blue-50/90 border-blue-600 shadow-xs ring-1 ring-blue-600/30'
+                            : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/60'
+                        }`}
+                      >
+                        {/* Letter Badge */}
+                        <div
+                          className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 transition-colors ${
+                            isSelected
+                              ? 'bg-[#0B2A5B] text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {letter}
+                        </div>
+
+                        {/* Radio Bullet */}
+                        <div className="pt-1.5 shrink-0">
+                          <div
+                            className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${
+                              isSelected ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white'
+                            }`}
+                          >
+                            {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          </div>
+                        </div>
+
+                        {/* Option Text */}
+                        <span
+                          className={`text-sm leading-relaxed ${
+                            isSelected ? 'text-blue-950 font-medium' : 'text-slate-700'
+                          }`}
+                        >
+                          {opt.text}
+                        </span>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <div className="p-8 text-center text-slate-400 text-sm bg-white rounded-2xl border border-slate-200">
+                    No options found for this MCQ.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Bottom Actions Bar */}
+            <div className="h-16 bg-white border-t border-slate-200 px-6 flex items-center justify-between shrink-0 shadow-xs">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleClearMcqSelection}
+                  disabled={!selectedMcqOptionId[currentQuestion.id]}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 border border-slate-200 hover:bg-slate-50 rounded-xl transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Clear Selection
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMarkedForReview((prev) => ({
+                      ...prev,
+                      [currentQuestion.id]: !prev[currentQuestion.id],
+                    }))
+                  }
+                  className={`px-3.5 py-1.5 text-xs font-semibold rounded-xl border flex items-center gap-1.5 transition cursor-pointer ${
+                    markedForReview[currentQuestion.id]
+                      ? 'bg-amber-50 border-amber-300 text-amber-800'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <Bookmark className="w-3.5 h-3.5" />
+                  <span>{markedForReview[currentQuestion.id] ? 'Marked for Review' : 'Mark for Review'}</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleSaveMcqAnswer(false)}
+                  disabled={isSavingMcq || !selectedMcqOptionId[currentQuestion.id]}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B2A5B] text-white hover:bg-[#123773] transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isSavingMcq ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>Save Answer</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSaveMcqAnswer(true)}
+                  disabled={isSavingMcq || !selectedMcqOptionId[currentQuestion.id]}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-[#2563EB] text-white hover:bg-[#1D4ED8] transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isSavingMcq ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>Save & Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </main>
+        ) : (
+          <main className="flex-1 flex flex-col bg-[#1E1E1E] overflow-hidden">
           {/* Editor Header Toolbar */}
           <div className="h-11 bg-[#18181B] border-b border-zinc-800 px-4 flex items-center justify-between shrink-0">
             {/* Language Selector */}
@@ -1463,7 +2109,9 @@ export const ExamInterface: React.FC = () => {
             )}
           </div>
         </main>
+      )}
       </div>
+      )}
 
       {/* =================================================== */}
       {/* SECURITY VIOLATION WARNING MODAL */}
@@ -1533,6 +2181,65 @@ export const ExamInterface: React.FC = () => {
                 className="flex-1 py-3 rounded-xl text-xs font-bold bg-[#EF4444] text-white hover:bg-[#DC2626] transition flex items-center justify-center gap-1.5"
               >
                 {isSubmittingFinal ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Final Submit</span>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================== */}
+      {/* SUBMIT SECTION CONFIRMATION MODAL (Requirement 15) */}
+      {/* =================================================== */}
+      {showSubmitSectionModal && activeSection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="max-w-md w-full bg-white rounded-3xl p-6 sm:p-8 space-y-6 border border-slate-100 shadow-2xl text-center">
+            <div className="w-14 h-14 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto border border-indigo-200">
+              <Send className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                Section Submission
+              </span>
+              <h3 className="text-lg font-bold text-slate-900">
+                Submit {activeSection.name}?
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                You have answered{' '}
+                <strong>
+                  {
+                    activeQuestions.filter((q) => {
+                      const sub = submissionsByQuestion[q.id];
+                      return sub && (sub.status === 'Accepted' || (q.question_type === 'MCQ' && (sub.selected_option_id || sub.code)));
+                    }).length
+                  }
+                </strong>{' '}
+                of <strong>{activeQuestions.length}</strong> questions in this section.
+              </p>
+            </div>
+
+            {activeSection.lock_after_submission && (
+              <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium text-left flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>
+                  Warning: Once submitted, this section will be locked. You will NOT be able to change or review answers in this section.
+                </span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowSubmitSectionModal(false)}
+                className="flex-1 py-3 rounded-xl text-xs font-semibold border border-slate-200 text-slate-700 hover:bg-slate-50 transition"
+              >
+                Cancel & Review
+              </button>
+              <button
+                onClick={() => handleSectionSubmit(false)}
+                disabled={isSubmittingSection}
+                className="flex-1 py-3 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                {isSubmittingSection ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Confirm Submit</span>}
               </button>
             </div>
           </div>

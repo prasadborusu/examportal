@@ -88,12 +88,66 @@ router.get('/:attemptId', async (req: Request, res: Response): Promise<void> => 
 
     const isExpired = timeRemainingSeconds <= 0 && participant.status !== 'SUBMITTED';
 
+    // Fetch Sections
+    const sections = await db.getSectionsByExam(exam.id);
+
+    // Initialize or resolve section states for sectional exams
+    let sectionStates = participant.section_states || {};
+    let currentSectionId = participant.current_section_id;
+
+    if (sections.length > 0) {
+      if (!currentSectionId || !sections.some((s) => s.id === currentSectionId)) {
+        currentSectionId = sections[0].id;
+      }
+
+      let statesChanged = false;
+      sections.forEach((sec, idx) => {
+        if (!sectionStates[sec.id]) {
+          sectionStates[sec.id] = {
+            status: idx === 0 ? 'IN_PROGRESS' : 'NOT_STARTED',
+            started_at: idx === 0 ? new Date().toISOString() : undefined,
+          };
+          statesChanged = true;
+        }
+      });
+
+      if (statesChanged || participant.current_section_id !== currentSectionId) {
+        await db.updateParticipant(participant.id, {
+          current_section_id: currentSectionId,
+          section_states: sectionStates,
+        });
+      }
+    }
+
+    // Calculate section-specific time remaining if current section has duration
+    let sectionTimeRemainingSeconds = timeRemainingSeconds;
+    if (currentSectionId) {
+      const activeSection = sections.find((s) => s.id === currentSectionId);
+      if (activeSection && activeSection.duration_minutes && activeSection.duration_minutes > 0) {
+        const secStartedAtStr = sectionStates[activeSection.id]?.started_at || participant.started_at;
+        const secStartedAt = new Date(secStartedAtStr).getTime();
+        const secDurationMs = activeSection.duration_minutes * 60 * 1000;
+        const secElapsed = now - secStartedAt;
+        sectionTimeRemainingSeconds = Math.max(0, Math.floor((secDurationMs - secElapsed) / 1000));
+      }
+    }
+
     const rawQuestions = await db.getQuestionsByExam(exam.id);
     const questions = await Promise.all(
       rawQuestions.map(async (q) => {
         const sanitizedTestCases = await db.getTestCasesByQuestion(q.id, false);
+
+        // Strip correct_option_id and is_correct for MCQ security
+        const sanitizedOptions = (q.options || []).map((opt) => ({
+          id: opt.id,
+          text: opt.text,
+        }));
+
         return {
           ...q,
+          correct_option_id: undefined, // Never expose to student
+          explanation: undefined, // Strip explanation during test
+          options: sanitizedOptions,
           test_cases: sanitizedTestCases,
         };
       })
@@ -106,6 +160,7 @@ router.get('/:attemptId', async (req: Request, res: Response): Promise<void> => 
         id: exam.id,
         title: exam.title,
         description: exam.description,
+        exam_type: exam.exam_type || 'FULL',
         duration_minutes: exam.duration_minutes,
         total_marks: exam.total_marks,
         allowed_languages: exam.allowed_languages,
@@ -119,7 +174,13 @@ router.get('/:attemptId', async (req: Request, res: Response): Promise<void> => 
         email: participant.email,
         status: participant.status,
         violations_count: participant.violations_count || 0,
+        current_section_id: currentSectionId,
+        section_states: sectionStates,
       },
+      sections,
+      currentSectionId,
+      sectionStates,
+      sectionTimeRemainingSeconds,
       timeRemainingSeconds,
       isExpired,
       questions,
@@ -353,9 +414,10 @@ router.post('/:attemptId/submit', async (req: Request, res: Response): Promise<v
       status = 'Runtime Error';
     }
 
-    const submission = await db.createSubmission({
+    const submission = await db.saveOrUpdateSubmission({
       participant_id: participant.id,
       question_id: question.id,
+      section_id: question.section_id || undefined,
       language,
       code,
       status,
@@ -382,6 +444,191 @@ router.post('/:attemptId/submit', async (req: Request, res: Response): Promise<v
   } catch (err: any) {
     console.error('Error in POST /:attemptId/submit:', err);
     res.status(500).json({ error: 'Failed to evaluate submission.' });
+  }
+});
+
+// 4b. MCQ Question Submission (Server-side grading, strictly concealed correct_option_id)
+router.post('/:attemptId/mcq-submit', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const attemptId = req.params.attemptId as string;
+    const { questionId, selectedOptionId } = req.body;
+
+    const participant = await db.getParticipantById(attemptId);
+    if (!participant) {
+      res.status(404).json({ error: 'Invalid attempt session.' });
+      return;
+    }
+
+    if (participant.status === 'SUBMITTED' || participant.status === 'TERMINATED') {
+      res.status(403).json({ error: 'Exam is already closed.' });
+      return;
+    }
+
+    const question = await db.getQuestionById(questionId);
+    if (!question) {
+      res.status(404).json({ error: 'Question not found.' });
+      return;
+    }
+
+    // Check if the answer is correct strictly on backend
+    const cleanSelected = typeof selectedOptionId === 'string' ? selectedOptionId.trim() : '';
+    const isAnswered = cleanSelected.length > 0;
+    const isCorrect = isAnswered && question.correct_option_id === cleanSelected;
+
+    let score = 0;
+    let status: SubmissionStatus = 'Not Answered' as any;
+
+    if (isAnswered) {
+      if (isCorrect) {
+        score = question.marks;
+        status = 'Accepted';
+      } else {
+        const neg = question.negative_marks ? Math.abs(question.negative_marks) : 0;
+        score = -neg;
+        status = 'Wrong Answer';
+      }
+    }
+
+    const submission = await db.saveOrUpdateSubmission({
+      participant_id: participant.id,
+      question_id: question.id,
+      section_id: question.section_id || undefined,
+      question_type: 'MCQ',
+      selected_option_id: isAnswered ? cleanSelected : undefined,
+      language: 'mcq',
+      code: isAnswered ? cleanSelected : '',
+      status,
+      score,
+      passed_test_cases: isCorrect ? 1 : 0,
+      total_test_cases: 1,
+      execution_time_ms: 0,
+      memory_kb: 0,
+    });
+
+    res.json({
+      success: true,
+      submissionId: submission.id,
+      questionId: question.id,
+      selectedOptionId: isAnswered ? cleanSelected : null,
+      status: submission.status,
+      score: submission.score,
+      maxMarks: question.marks,
+      // Note: correct_option_id is NEVER returned to the student
+    });
+  } catch (err: any) {
+    console.error('Error in POST /:attemptId/mcq-submit:', err);
+    res.status(500).json({ error: 'Failed to record MCQ answer.' });
+  }
+});
+
+// 4c. Start Section (For timed sections or tracking start time)
+router.post('/:attemptId/sections/:sectionId/start', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const attemptId = req.params.attemptId as string;
+    const sectionId = req.params.sectionId as string;
+
+    const participant = await db.getParticipantById(attemptId);
+    if (!participant) {
+      res.status(404).json({ error: 'Participant not found.' });
+      return;
+    }
+
+    const sectionStates = participant.section_states || {};
+    const existing = sectionStates[sectionId] || { status: 'NOT_STARTED' };
+
+    if (existing.status === 'LOCKED') {
+      res.status(403).json({ error: 'This section is locked and cannot be started.' });
+      return;
+    }
+
+    if (existing.status === 'NOT_STARTED') {
+      sectionStates[sectionId] = {
+        status: 'IN_PROGRESS',
+        started_at: new Date().toISOString(),
+      };
+    }
+
+    await db.updateParticipant(attemptId, {
+      current_section_id: sectionId,
+      section_states: sectionStates,
+    });
+
+    res.json({
+      success: true,
+      currentSectionId: sectionId,
+      sectionStates,
+    });
+  } catch (err: any) {
+    console.error('Error in POST /:attemptId/sections/:sectionId/start:', err);
+    res.status(500).json({ error: 'Failed to start section.' });
+  }
+});
+
+// 4d. Submit Section (Lock section if configured, advance to next section)
+router.post('/:attemptId/sections/:sectionId/submit', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const attemptId = req.params.attemptId as string;
+    const sectionId = req.params.sectionId as string;
+
+    const participant = await db.getParticipantById(attemptId);
+    if (!participant) {
+      res.status(404).json({ error: 'Participant not found.' });
+      return;
+    }
+
+    const exam = await db.getExamById(participant.exam_id);
+    if (!exam) {
+      res.status(404).json({ error: 'Exam not found.' });
+      return;
+    }
+
+    const sections = await db.getSectionsByExam(exam.id);
+    const currSection = sections.find((s) => s.id === sectionId);
+    if (!currSection) {
+      res.status(404).json({ error: 'Section not found.' });
+      return;
+    }
+
+    const sectionStates = participant.section_states || {};
+    const lockAfterSub = currSection.lock_after_submission ?? true;
+
+    sectionStates[sectionId] = {
+      ...(sectionStates[sectionId] || {}),
+      status: lockAfterSub ? 'LOCKED' : 'COMPLETED',
+      submitted_at: new Date().toISOString(),
+    };
+
+    // Find next section in order
+    const currIdx = sections.findIndex((s) => s.id === sectionId);
+    const nextSection = currIdx >= 0 && currIdx < sections.length - 1 ? sections[currIdx + 1] : null;
+
+    let nextSectionId: string | null = null;
+    if (nextSection) {
+      nextSectionId = nextSection.id;
+      if (!sectionStates[nextSection.id] || sectionStates[nextSection.id].status === 'NOT_STARTED') {
+        sectionStates[nextSection.id] = {
+          status: 'IN_PROGRESS',
+          started_at: new Date().toISOString(),
+        };
+      }
+    }
+
+    await db.updateParticipant(attemptId, {
+      current_section_id: nextSectionId || participant.current_section_id,
+      section_states: sectionStates,
+    });
+
+    res.json({
+      success: true,
+      submittedSectionId: sectionId,
+      locked: lockAfterSub,
+      nextSectionId,
+      isLastSection: !nextSection,
+      sectionStates,
+    });
+  } catch (err: any) {
+    console.error('Error in POST /:attemptId/sections/:sectionId/submit:', err);
+    res.status(500).json({ error: 'Failed to submit section.' });
   }
 });
 
@@ -428,7 +675,7 @@ router.post('/:attemptId/security-event', async (req: Request, res: Response): P
   }
 });
 
-// 6. Final Exam Submission
+// 6. Final Exam Submission (Computes Question Breakdown & Section Breakdown)
 router.post('/:attemptId/final-submit', async (req: Request, res: Response): Promise<void> => {
   try {
     const attemptId = req.params.attemptId as string;
@@ -444,6 +691,7 @@ router.post('/:attemptId/final-submit', async (req: Request, res: Response): Pro
       return;
     }
 
+    const sections = await db.getSectionsByExam(exam.id);
     const questions = await db.getQuestionsByExam(exam.id);
     const submissions = await db.getSubmissionsByParticipant(attemptId);
 
@@ -460,8 +708,10 @@ router.post('/:attemptId/final-submit', async (req: Request, res: Response): Pro
           return best;
         }, null);
 
-        const allTc = await db.getAllTestCasesForExecution(q.id);
-        totalTestCases += allTc.length || 1;
+        const isCoding = q.question_type === 'CODING';
+        const allTc = isCoding ? await db.getAllTestCasesForExecution(q.id) : [];
+        const qTotalTestCases = isCoding ? (allTc.length || 1) : 1;
+        totalTestCases += qTotalTestCases;
 
         if (bestSub) {
           questionsAnswered++;
@@ -469,26 +719,64 @@ router.post('/:attemptId/final-submit', async (req: Request, res: Response): Pro
           passedTestCases += bestSub.passed_test_cases;
           return {
             question_id: q.id,
+            section_id: q.section_id || undefined,
             question_title: q.title,
+            question_type: q.question_type,
             score: bestSub.score,
             max_marks: q.marks,
             status: bestSub.status,
             passed_cases: bestSub.passed_test_cases,
-            total_cases: bestSub.total_test_cases,
+            total_cases: qTotalTestCases,
+            selected_option_id: bestSub.selected_option_id,
           };
         }
 
         return {
           question_id: q.id,
+          section_id: q.section_id || undefined,
           question_title: q.title,
+          question_type: q.question_type,
           score: 0,
           max_marks: q.marks,
           status: 'Not Answered' as any,
           passed_cases: 0,
-          total_cases: allTc.length,
+          total_cases: qTotalTestCases,
         };
       })
     );
+
+    // Compute Section Breakdown if sections exist
+    const sectionBreakdown = sections.map((sec) => {
+      const secQuestions = questions.filter((q) => q.section_id === sec.id);
+      let secScore = 0;
+      let secMaxMarks = 0;
+      let secAnswered = 0;
+      let secPassedTcs = 0;
+      let secTotalTcs = 0;
+
+      secQuestions.forEach((q) => {
+        secMaxMarks += q.marks;
+        const b = breakdown.find((item) => item.question_id === q.id);
+        if (b) {
+          secScore += b.score;
+          if (b.status !== 'Not Answered') secAnswered++;
+          secPassedTcs += b.passed_cases;
+          secTotalTcs += b.total_cases;
+        }
+      });
+
+      return {
+        section_id: sec.id,
+        section_name: sec.name,
+        question_type: sec.question_type,
+        score: Math.max(0, secScore),
+        max_marks: secMaxMarks || sec.total_marks || 0,
+        questions_answered: secAnswered,
+        total_questions: secQuestions.length,
+        passed_test_cases: secPassedTcs,
+        total_test_cases: secTotalTcs,
+      };
+    });
 
     const startedTime = new Date(participant.started_at).getTime();
     const timeTakenSeconds = Math.round((Date.now() - startedTime) / 1000);
@@ -500,7 +788,7 @@ router.post('/:attemptId/final-submit', async (req: Request, res: Response): Pro
       student_name: participant.name,
       roll_number: participant.roll_number,
       email: participant.email,
-      total_score: totalScore,
+      total_score: Math.max(0, totalScore),
       total_marks: exam.total_marks,
       time_taken_seconds: timeTakenSeconds,
       questions_answered: questionsAnswered,
@@ -511,6 +799,7 @@ router.post('/:attemptId/final-submit', async (req: Request, res: Response): Pro
       status: participant.status === 'TERMINATED' ? 'TERMINATED' : 'SUBMITTED',
       submitted_at: new Date().toISOString(),
       breakdown,
+      section_breakdown: sectionBreakdown.length > 0 ? sectionBreakdown : undefined,
     };
 
     await db.saveExamResult(examResult);

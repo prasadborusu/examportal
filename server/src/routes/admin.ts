@@ -52,6 +52,7 @@ router.post('/exams', async (req: Request, res: Response): Promise<void> => {
     const {
       title,
       description,
+      exam_type,
       passkey,
       duration_minutes,
       total_marks,
@@ -65,8 +66,9 @@ router.post('/exams', async (req: Request, res: Response): Promise<void> => {
     const finalPasskey = passkey || String(Math.floor(1000 + Math.random() * 9000));
 
     const newExam = await db.createExam({
-      title: title || 'New Coding Assessment',
+      title: title || 'New Assessment',
       description: description || '',
+      exam_type: exam_type || 'FULL',
       passkey: finalPasskey,
       duration_minutes: Number(duration_minutes) || 60,
       total_marks: Number(total_marks) || 100,
@@ -109,15 +111,133 @@ router.delete('/exams/:id', async (req: Request, res: Response): Promise<void> =
   res.json({ success: ok });
 });
 
+// Section Management Routes
+router.get('/exams/:id/sections', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const sections = await db.getSectionsByExam(id);
+    res.json(sections);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch sections' });
+  }
+});
+
+router.post('/exams/:id/sections', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const {
+      name,
+      description,
+      question_type,
+      duration_minutes,
+      total_marks,
+      question_limit,
+      navigation_mode,
+      lock_after_submission,
+      allow_previous_section,
+      order_number,
+    } = req.body;
+
+    const existing = await db.getSectionsByExam(id);
+    const finalOrder = Number(order_number) || existing.length + 1;
+
+    const newSection = await db.createSection({
+      exam_id: id,
+      name: name || `Section ${finalOrder}`,
+      description: description || '',
+      question_type: question_type || 'MIXED',
+      duration_minutes: Number(duration_minutes) || 30,
+      total_marks: Number(total_marks) || 30,
+      question_limit: question_limit ? Number(question_limit) : undefined,
+      navigation_mode: navigation_mode || 'FREE',
+      lock_after_submission: Boolean(lock_after_submission),
+      allow_previous_section: allow_previous_section !== undefined ? Boolean(allow_previous_section) : true,
+      order_number: finalOrder,
+    });
+
+    res.status(201).json(newSection);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to create section: ' + err.message });
+  }
+});
+
+router.get('/sections/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const section = await db.getSectionById(id);
+    if (!section) {
+      res.status(404).json({ error: 'Section not found' });
+      return;
+    }
+    res.json(section);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch section' });
+  }
+});
+
+router.put('/sections/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const updated = await db.updateSection(id, req.body);
+    if (!updated) {
+      res.status(404).json({ error: 'Section not found' });
+      return;
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update section: ' + err.message });
+  }
+});
+
+router.delete('/sections/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const ok = await db.deleteSection(id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to delete section' });
+  }
+});
+
+router.post('/exams/:id/sections/reorder', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { sectionIds } = req.body;
+    if (!Array.isArray(sectionIds)) {
+      res.status(400).json({ error: 'sectionIds array is required' });
+      return;
+    }
+    const updated = await db.reorderSections(id, sectionIds);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to reorder sections' });
+  }
+});
+
+router.post('/sections/:id/duplicate', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const duplicated = await db.duplicateSection(id);
+    if (!duplicated) {
+      res.status(404).json({ error: 'Section not found' });
+      return;
+    }
+    res.status(201).json(duplicated);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to duplicate section' });
+  }
+});
+
 // Questions Management
 router.get('/exams/:id/questions', async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const questions = await db.getQuestionsByExam(id);
+    const sectionId = req.query.sectionId as string | undefined;
+    const questions = await db.getQuestionsByExam(id, sectionId || null);
     const questionsWithTestCases = await Promise.all(
       questions.map(async (q) => ({
         ...q,
-        test_cases: await db.getAllTestCasesForExecution(q.id),
+        test_cases: q.question_type !== 'MCQ' ? await db.getAllTestCasesForExecution(q.id) : [],
       }))
     );
     res.json(questionsWithTestCases);
@@ -130,6 +250,8 @@ router.post('/exams/:id/questions', async (req: Request, res: Response): Promise
   try {
     const id = req.params.id as string;
     const {
+      section_id,
+      question_type,
       title,
       description,
       input_format,
@@ -141,32 +263,42 @@ router.post('/exams/:id/questions', async (req: Request, res: Response): Promise
       time_limit,
       order_number,
       starter_templates,
+      options,
+      correct_option_id,
+      explanation,
+      negative_marks,
       test_cases,
     } = req.body;
 
     // Determine next order_number if not provided
     let finalOrder = Number(order_number);
     if (!finalOrder || isNaN(finalOrder)) {
-      const existing = await db.getQuestionsByExam(id);
+      const existing = await db.getQuestionsByExam(id, section_id || null);
       finalOrder = existing.length + 1;
     }
 
     const newQ = await db.createQuestion({
       exam_id: id,
-      title: title || 'Untitled Problem',
+      section_id: section_id || null,
+      question_type: question_type || 'CODING',
+      title: title || (question_type === 'MCQ' ? 'Untitled MCQ Question' : 'Untitled Problem'),
       description: description || '',
       input_format: input_format || '',
       output_format: output_format || '',
       constraints: constraints || '',
       examples: Array.isArray(examples) ? examples : [],
       difficulty: difficulty || 'Easy',
-      marks: Number(marks) || 10,
+      marks: Number(marks) || (question_type === 'MCQ' ? 2 : 10),
       time_limit: Number(time_limit) || 3000,
       order_number: finalOrder,
       starter_templates: starter_templates || {},
+      options: Array.isArray(options) ? options : [],
+      correct_option_id: correct_option_id || '',
+      explanation: explanation || '',
+      negative_marks: Number(negative_marks) || 0,
     });
 
-    if (Array.isArray(test_cases)) {
+    if (newQ.question_type !== 'MCQ' && Array.isArray(test_cases)) {
       for (const tc of test_cases) {
         await db.createTestCase({
           question_id: newQ.id,
@@ -181,7 +313,7 @@ router.post('/exams/:id/questions', async (req: Request, res: Response): Promise
 
     const fullQ = {
       ...newQ,
-      test_cases: await db.getAllTestCasesForExecution(newQ.id),
+      test_cases: newQ.question_type !== 'MCQ' ? await db.getAllTestCasesForExecution(newQ.id) : [],
     };
 
     res.status(201).json(fullQ);

@@ -199,7 +199,7 @@ export const AdminSubmissions: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">
-                  {selectedSub.student_name} — {selectedSub.question_title} ({selectedSub.language.toUpperCase()})
+                  {selectedSub.student_name} — {selectedSub.question_title} ({(selectedSub.language || 'code').toUpperCase()})
                 </h3>
                 <span className="text-xs text-slate-500">
                   Status: <strong className="text-slate-800">{selectedSub.status}</strong> • Score: <strong>{selectedSub.score} pts</strong> • Passed: {selectedSub.passed_test_cases}/{selectedSub.total_test_cases}

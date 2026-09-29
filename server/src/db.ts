@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import {
   Exam,
+  Section,
   Question,
   TestCase,
   Participant,
@@ -20,6 +21,7 @@ const STORE_FILE = path.join(DATA_DIR, 'store.json');
 
 interface DatabaseStore {
   exams: Exam[];
+  sections: Section[];
   questions: Question[];
   testCases: TestCase[];
   participants: Participant[];
@@ -541,6 +543,7 @@ int main() {
   // Completely empty participant, submission, violation, and result lists
   return {
     exams,
+    sections: [],
     questions,
     testCases,
     participants: [],
@@ -561,6 +564,9 @@ class Database {
 
     // Always reset to clean data without demo students
     this.store = getInitialData();
+    if (!this.store.sections) {
+      this.store.sections = [];
+    }
     this.save();
   }
 
@@ -609,20 +615,66 @@ class Database {
   async createExam(examData: Omit<Exam, 'id' | 'created_at'>): Promise<Exam> {
     const finalData = {
       ...examData,
+      exam_type: examData.exam_type || 'FULL',
       status: examData.status || 'DRAFT',
     };
+    let newExam: Exam | null = null;
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('exams').insert([finalData]).select().single();
-      if (!error && data) return data as Exam;
-      if (error) console.error('Supabase createExam error:', error);
+      try {
+        const { data, error } = await supabase.from('exams').insert([finalData]).select().single();
+        if (!error && data) {
+          newExam = data as Exam;
+        } else if (error) {
+          // If exam_type column does not exist yet in Supabase schema
+          const { exam_type, ...withoutType } = finalData;
+          const fb = await supabase.from('exams').insert([withoutType]).select().single();
+          if (!fb.error && fb.data) {
+            newExam = { ...(fb.data as Exam), exam_type: finalData.exam_type };
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase createExam error:', err);
+      }
     }
-    const newExam: Exam = {
-      ...finalData,
-      id: `exam-${Date.now()}`,
-      created_at: new Date().toISOString(),
-    };
+    if (!newExam) {
+      newExam = {
+        ...finalData,
+        id: `exam-${Date.now()}`,
+        created_at: new Date().toISOString(),
+      };
+    }
     this.store.exams.unshift(newExam);
     this.save();
+
+    // Automatically create default section for MCQ and CODING exams
+    if (newExam.exam_type === 'MCQ') {
+      await this.createSection({
+        exam_id: newExam.id,
+        name: 'Multiple Choice Questions',
+        description: 'Single and multiple choice assessment questions',
+        question_type: 'MCQ',
+        duration_minutes: newExam.duration_minutes,
+        total_marks: newExam.total_marks,
+        navigation_mode: 'FREE',
+        lock_after_submission: false,
+        allow_previous_section: true,
+        order_number: 1,
+      });
+    } else if (newExam.exam_type === 'CODING') {
+      await this.createSection({
+        exam_id: newExam.id,
+        name: 'Coding Problems',
+        description: 'Algorithmic programming and data structures challenges',
+        question_type: 'CODING',
+        duration_minutes: newExam.duration_minutes,
+        total_marks: newExam.total_marks,
+        navigation_mode: 'FREE',
+        lock_after_submission: false,
+        allow_previous_section: true,
+        order_number: 1,
+      });
+    }
+
     return newExam;
   }
 
@@ -650,6 +702,8 @@ class Database {
     }
     const initialLen = this.store.exams.length;
     this.store.exams = this.store.exams.filter((e) => e.id !== id);
+    this.store.sections = (this.store.sections || []).filter((s) => s.exam_id !== id);
+    this.store.questions = this.store.questions.filter((q) => q.exam_id !== id);
     this.save();
     return this.store.exams.length < initialLen;
   }
@@ -658,96 +712,392 @@ class Database {
     const exam = await this.getExamById(examId);
     if (!exam) return { success: false, error: 'Exam not found' };
 
-    const questions = await this.getQuestionsByExam(examId);
-    if (questions.length === 0) {
-      return { success: false, error: 'Cannot activate exam: Add at least one coding question first.' };
+    if (!exam.title || !exam.title.trim()) {
+      return { success: false, error: 'Exam title is required.' };
+    }
+    if (!exam.passkey || !exam.passkey.trim()) {
+      return { success: false, error: 'Exam passkey is required.' };
+    }
+    if (!exam.duration_minutes || exam.duration_minutes <= 0) {
+      return { success: false, error: 'Exam duration must be greater than 0.' };
+    }
+    if (!exam.total_marks || exam.total_marks <= 0) {
+      return { success: false, error: 'Total marks must be greater than 0.' };
     }
 
-    const totalConfiguredMarks = questions.reduce((acc, q) => acc + (q.marks || 0), 0);
-    if (totalConfiguredMarks !== exam.total_marks) {
-      return {
-        success: false,
-        error: `Cannot activate exam: Total question marks (${totalConfiguredMarks}) do not match exam total marks (${exam.total_marks}).`,
-      };
+    const questions = await this.getQuestionsByExam(examId);
+    const sections = await this.getSectionsByExam(examId);
+
+    // Section 25 Validation Rules
+    if (exam.exam_type === 'SECTIONAL') {
+      if (sections.length === 0) {
+        return { success: false, error: 'Sectional exam must have at least one section.' };
+      }
+      for (const sec of sections) {
+        if (!sec.name.trim()) {
+          return { success: false, error: `Section ${sec.order_number} must have a name.` };
+        }
+        const secQuestions = questions.filter((q) => q.section_id === sec.id);
+        if (secQuestions.length === 0) {
+          return { success: false, error: `Section "${sec.name}" has no questions. Please add at least one question.` };
+        }
+      }
+    } else if (exam.exam_type === 'MCQ') {
+      const mcqQuestions = questions.filter((q) => q.question_type === 'MCQ');
+      if (mcqQuestions.length === 0) {
+        return { success: false, error: 'MCQ exam must have at least one MCQ question.' };
+      }
+    } else if (exam.exam_type === 'CODING') {
+      const codingQuestions = questions.filter((q) => q.question_type !== 'MCQ');
+      if (codingQuestions.length === 0) {
+        return { success: false, error: 'Coding exam must have at least one coding question.' };
+      }
+    } else {
+      // FULL Exam
+      if (questions.length === 0) {
+        return { success: false, error: 'Full exam must have at least one question.' };
+      }
+    }
+
+    // Validate MCQ questions have at least 2 options and a designated correct option
+    for (const q of questions) {
+      if (q.question_type === 'MCQ') {
+        if (!q.options || q.options.length < 2) {
+          return { success: false, error: `MCQ question "${q.title}" must have at least 2 options.` };
+        }
+        if (!q.correct_option_id) {
+          return { success: false, error: `MCQ question "${q.title}" must have a designated correct answer.` };
+        }
+      }
     }
 
     const updated = await this.updateExam(examId, { status: 'ACTIVE' });
     return { success: true, exam: updated || exam };
   }
 
-  // 2. Questions
-  async getQuestionsByExam(examId: string): Promise<Question[]> {
+  // 1.5 Sections Management
+  async getSectionsByExam(examId: string): Promise<Section[]> {
+    let list: Section[] = [];
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('questions').select('*').eq('exam_id', examId).order('order_number');
-      if (!error && data) {
-        return (data as any[]).map((q) => {
-          const ext = q.starter_templates?.__extended || {};
-          return {
-            ...q,
-            input_format: q.input_format || ext.input_format || '',
-            output_format: q.output_format || ext.output_format || '',
-            constraints: q.constraints || ext.constraints || '',
-            examples: q.examples || ext.examples || [],
-            time_limit: q.time_limit || ext.time_limit || 3000,
-          } as Question;
+      try {
+        const { data, error } = await supabase
+          .from('sections')
+          .select('*')
+          .eq('exam_id', examId)
+          .order('order_number', { ascending: true });
+        if (!error && data) {
+          list = data as Section[];
+        }
+      } catch (err) {
+        console.warn('Supabase getSectionsByExam fallback:', err);
+      }
+    }
+
+    if (list.length === 0) {
+      list = (this.store.sections || []).filter((s) => s.exam_id === examId);
+    }
+
+    // Attach questions_count to sections
+    const allQuestions = await this.getQuestionsByExam(examId);
+    return list
+      .map((sec) => ({
+        ...sec,
+        questions_count: allQuestions.filter((q) => q.section_id === sec.id).length,
+      }))
+      .sort((a, b) => a.order_number - b.order_number);
+  }
+
+  async getSectionById(id: string): Promise<Section | undefined> {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase.from('sections').select('*').eq('id', id).maybeSingle();
+        if (!error && data) return data as Section;
+      } catch (err) {
+        console.warn('Supabase getSectionById fallback:', err);
+      }
+    }
+    return (this.store.sections || []).find((s) => s.id === id);
+  }
+
+  async createSection(sectionData: Omit<Section, 'id' | 'created_at'>): Promise<Section> {
+    if (!this.store.sections) this.store.sections = [];
+    const newSection: Section = {
+      ...sectionData,
+      id: `sec-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase.from('sections').insert([{
+          ...sectionData,
+          id: newSection.id,
+        }]).select().single();
+        if (!error && data) {
+          const createdSec = data as Section;
+          this.store.sections.push(createdSec);
+          this.save();
+          return createdSec;
+        }
+      } catch (err) {
+        console.warn('Supabase createSection fallback:', err);
+      }
+    }
+
+    this.store.sections.push(newSection);
+    this.save();
+    return newSection;
+  }
+
+  async updateSection(id: string, updates: Partial<Section>): Promise<Section | null> {
+    if (!this.store.sections) this.store.sections = [];
+    const updatedFields = { ...updates, updated_at: new Date().toISOString() };
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase.from('sections').update(updatedFields).eq('id', id).select().single();
+        if (!error && data) {
+          const idx = this.store.sections.findIndex((s) => s.id === id);
+          if (idx !== -1) this.store.sections[idx] = data as Section;
+          this.save();
+          return data as Section;
+        }
+      } catch (err) {
+        console.warn('Supabase updateSection fallback:', err);
+      }
+    }
+
+    const idx = this.store.sections.findIndex((s) => s.id === id);
+    if (idx === -1) return null;
+    this.store.sections[idx] = { ...this.store.sections[idx], ...updatedFields };
+    this.save();
+    return this.store.sections[idx];
+  }
+
+  async deleteSection(id: string): Promise<boolean> {
+    if (!this.store.sections) this.store.sections = [];
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('sections').delete().eq('id', id);
+      } catch (err) {}
+    }
+    const initialLen = this.store.sections.length;
+    this.store.sections = this.store.sections.filter((s) => s.id !== id);
+    // Unset section_id on questions that belonged to this section
+    this.store.questions.forEach((q) => {
+      if (q.section_id === id) q.section_id = null;
+    });
+    this.save();
+    return this.store.sections.length < initialLen;
+  }
+
+  async reorderSections(examId: string, sectionIds: string[]): Promise<Section[]> {
+    if (!this.store.sections) this.store.sections = [];
+    for (let i = 0; i < sectionIds.length; i++) {
+      const secId = sectionIds[i];
+      const order = i + 1;
+      await this.updateSection(secId, { order_number: order });
+    }
+    return this.getSectionsByExam(examId);
+  }
+
+  async duplicateSection(sectionId: string): Promise<Section | null> {
+    const original = await this.getSectionById(sectionId);
+    if (!original) return null;
+
+    const existingSections = await this.getSectionsByExam(original.exam_id);
+    const newSection = await this.createSection({
+      exam_id: original.exam_id,
+      name: `${original.name} (Copy)`,
+      description: original.description || '',
+      question_type: original.question_type,
+      duration_minutes: original.duration_minutes,
+      total_marks: original.total_marks,
+      question_limit: original.question_limit,
+      navigation_mode: original.navigation_mode,
+      lock_after_submission: original.lock_after_submission,
+      allow_previous_section: original.allow_previous_section,
+      order_number: existingSections.length + 1,
+    });
+
+    // Duplicate questions belonging to this section
+    const questions = await this.getQuestionsByExam(original.exam_id, sectionId);
+    for (const q of questions) {
+      const newQ = await this.createQuestion({
+        exam_id: original.exam_id,
+        section_id: newSection.id,
+        question_type: q.question_type || 'CODING',
+        title: q.title,
+        description: q.description,
+        difficulty: q.difficulty,
+        marks: q.marks,
+        time_limit: q.time_limit,
+        order_number: q.order_number,
+        input_format: q.input_format,
+        output_format: q.output_format,
+        constraints: q.constraints,
+        examples: q.examples,
+        starter_templates: q.starter_templates,
+        options: q.options,
+        correct_option_id: q.correct_option_id,
+        explanation: q.explanation,
+        negative_marks: q.negative_marks,
+      });
+
+      const testCases = await this.getAllTestCasesForExecution(q.id);
+      for (const tc of testCases) {
+        await this.createTestCase({
+          question_id: newQ.id,
+          input: tc.input,
+          expected_output: tc.expected_output,
+          is_hidden: tc.is_hidden,
+          type: tc.type,
+          marks: tc.marks,
         });
       }
     }
-    return this.store.questions
-      .filter((q) => q.exam_id === examId)
-      .sort((a, b) => a.order_number - b.order_number);
+
+    return newSection;
+  }
+
+  // 2. Questions Management
+  async getQuestionsByExam(examId: string, sectionId?: string | null): Promise<Question[]> {
+    let list: Question[] = [];
+    if (isSupabaseConfigured && supabase) {
+      try {
+        let query = supabase.from('questions').select('*').eq('exam_id', examId).order('order_number');
+        if (sectionId !== undefined && sectionId !== null) {
+          query = query.eq('section_id', sectionId);
+        }
+        const { data, error } = await query;
+        if (!error && data) {
+          list = (data as any[]).map((q) => {
+            const ext = q.starter_templates?.__extended || {};
+            return {
+              ...q,
+              section_id: q.section_id !== undefined ? q.section_id : (ext.section_id || null),
+              question_type: q.question_type || ext.question_type || 'CODING',
+              options: q.options || ext.options || [],
+              correct_option_id: q.correct_option_id || ext.correct_option_id || '',
+              explanation: q.explanation || ext.explanation || '',
+              negative_marks: q.negative_marks !== undefined ? q.negative_marks : (ext.negative_marks || 0),
+              input_format: q.input_format || ext.input_format || '',
+              output_format: q.output_format || ext.output_format || '',
+              constraints: q.constraints || ext.constraints || '',
+              examples: q.examples || ext.examples || [],
+              time_limit: q.time_limit || ext.time_limit || 3000,
+            } as Question;
+          });
+        }
+      } catch (err) {
+        console.warn('Supabase getQuestionsByExam fallback:', err);
+      }
+    }
+
+    if (list.length === 0) {
+      list = (this.store.questions || []).filter((q) => q.exam_id === examId);
+      if (sectionId !== undefined && sectionId !== null) {
+        list = list.filter((q) => q.section_id === sectionId);
+      }
+    }
+
+    return list.sort((a, b) => a.order_number - b.order_number);
   }
 
   async getQuestionById(id: string): Promise<Question | undefined> {
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('questions').select('*').eq('id', id).maybeSingle();
-      if (!error && data) {
-        const ext = data.starter_templates?.__extended || {};
-        return {
-          ...data,
-          input_format: data.input_format || ext.input_format || '',
-          output_format: data.output_format || ext.output_format || '',
-          constraints: data.constraints || ext.constraints || '',
-          examples: data.examples || ext.examples || [],
-          time_limit: data.time_limit || ext.time_limit || 3000,
-        } as Question;
+      try {
+        const { data, error } = await supabase.from('questions').select('*').eq('id', id).maybeSingle();
+        if (!error && data) {
+          const ext = data.starter_templates?.__extended || {};
+          return {
+            ...data,
+            section_id: data.section_id !== undefined ? data.section_id : (ext.section_id || null),
+            question_type: data.question_type || ext.question_type || 'CODING',
+            options: data.options || ext.options || [],
+            correct_option_id: data.correct_option_id || ext.correct_option_id || '',
+            explanation: data.explanation || ext.explanation || '',
+            negative_marks: data.negative_marks !== undefined ? data.negative_marks : (ext.negative_marks || 0),
+            input_format: data.input_format || ext.input_format || '',
+            output_format: data.output_format || ext.output_format || '',
+            constraints: data.constraints || ext.constraints || '',
+            examples: data.examples || ext.examples || [],
+            time_limit: data.time_limit || ext.time_limit || 3000,
+          } as Question;
+        }
+      } catch (err) {
+        console.warn('Supabase getQuestionById fallback:', err);
       }
     }
     return this.store.questions.find((q) => q.id === id);
   }
 
   async createQuestion(qData: Omit<Question, 'id' | 'created_at'>): Promise<Question> {
+    const extData = {
+      section_id: qData.section_id || null,
+      question_type: qData.question_type || 'CODING',
+      options: qData.options || [],
+      correct_option_id: qData.correct_option_id || '',
+      explanation: qData.explanation || '',
+      negative_marks: qData.negative_marks || 0,
+      input_format: qData.input_format || '',
+      output_format: qData.output_format || '',
+      constraints: qData.constraints || '',
+      examples: qData.examples || [],
+      time_limit: qData.time_limit || 3000,
+    };
+
     if (isSupabaseConfigured && supabase) {
-      const supabasePayload = {
-        exam_id: qData.exam_id,
-        title: qData.title,
-        description: qData.description,
-        difficulty: qData.difficulty,
-        marks: qData.marks,
-        order_number: qData.order_number,
-        starter_templates: {
-          ...qData.starter_templates,
-          __extended: {
-            input_format: qData.input_format || '',
-            output_format: qData.output_format || '',
-            constraints: qData.constraints || '',
-            examples: qData.examples || [],
-            time_limit: qData.time_limit || 3000,
+      try {
+        const supabasePayload: any = {
+          exam_id: qData.exam_id,
+          section_id: qData.section_id || null,
+          question_type: qData.question_type || 'CODING',
+          title: qData.title,
+          description: qData.description,
+          difficulty: qData.difficulty,
+          marks: qData.marks,
+          order_number: qData.order_number,
+          options: qData.options || [],
+          correct_option_id: qData.correct_option_id || null,
+          explanation: qData.explanation || null,
+          negative_marks: qData.negative_marks || 0,
+          starter_templates: {
+            ...qData.starter_templates,
+            __extended: extData,
           },
-        },
-      };
-      const { data, error } = await supabase.from('questions').insert([supabasePayload]).select().single();
-      if (!error && data) {
-        return {
-          ...qData,
-          id: data.id,
-          created_at: data.created_at,
-        } as Question;
+        };
+        const { data, error } = await supabase.from('questions').insert([supabasePayload]).select().single();
+        if (!error && data) {
+          const createdQ: Question = {
+            ...qData,
+            id: data.id,
+            section_id: data.section_id !== undefined ? data.section_id : extData.section_id,
+            question_type: data.question_type || extData.question_type,
+            options: data.options || extData.options,
+            correct_option_id: data.correct_option_id || extData.correct_option_id,
+            explanation: data.explanation || extData.explanation,
+            created_at: data.created_at,
+          };
+          this.store.questions.push(createdQ);
+          this.save();
+          return createdQ;
+        }
+      } catch (err) {
+        console.warn('Supabase createQuestion fallback:', err);
       }
     }
+
     const newQ: Question = {
       ...qData,
       id: `q-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      section_id: qData.section_id || null,
+      question_type: qData.question_type || 'CODING',
+      options: qData.options || [],
+      correct_option_id: qData.correct_option_id || '',
+      explanation: qData.explanation || '',
+      negative_marks: qData.negative_marks || 0,
       created_at: new Date().toISOString(),
     };
     this.store.questions.push(newQ);
@@ -757,35 +1107,56 @@ class Database {
 
   async updateQuestion(id: string, updates: Partial<Question>): Promise<Question | null> {
     if (isSupabaseConfigured && supabase) {
-      const current = await this.getQuestionById(id);
-      const mergedTemplates = {
-        ...(current?.starter_templates || {}),
-        ...(updates.starter_templates || {}),
-        __extended: {
-          input_format: updates.input_format !== undefined ? updates.input_format : (current?.input_format || ''),
-          output_format: updates.output_format !== undefined ? updates.output_format : (current?.output_format || ''),
-          constraints: updates.constraints !== undefined ? updates.constraints : (current?.constraints || ''),
-          examples: updates.examples !== undefined ? updates.examples : (current?.examples || []),
-          time_limit: updates.time_limit !== undefined ? updates.time_limit : (current?.time_limit || 3000),
-        },
-      };
+      try {
+        const current = await this.getQuestionById(id);
+        const mergedTemplates = {
+          ...(current?.starter_templates || {}),
+          ...(updates.starter_templates || {}),
+          __extended: {
+            section_id: updates.section_id !== undefined ? updates.section_id : (current?.section_id || null),
+            question_type: updates.question_type !== undefined ? updates.question_type : (current?.question_type || 'CODING'),
+            options: updates.options !== undefined ? updates.options : (current?.options || []),
+            correct_option_id: updates.correct_option_id !== undefined ? updates.correct_option_id : (current?.correct_option_id || ''),
+            explanation: updates.explanation !== undefined ? updates.explanation : (current?.explanation || ''),
+            negative_marks: updates.negative_marks !== undefined ? updates.negative_marks : (current?.negative_marks || 0),
+            input_format: updates.input_format !== undefined ? updates.input_format : (current?.input_format || ''),
+            output_format: updates.output_format !== undefined ? updates.output_format : (current?.output_format || ''),
+            constraints: updates.constraints !== undefined ? updates.constraints : (current?.constraints || ''),
+            examples: updates.examples !== undefined ? updates.examples : (current?.examples || []),
+            time_limit: updates.time_limit !== undefined ? updates.time_limit : (current?.time_limit || 3000),
+          },
+        };
 
-      const supabaseUpdates: any = {};
-      if (updates.title !== undefined) supabaseUpdates.title = updates.title;
-      if (updates.description !== undefined) supabaseUpdates.description = updates.description;
-      if (updates.difficulty !== undefined) supabaseUpdates.difficulty = updates.difficulty;
-      if (updates.marks !== undefined) supabaseUpdates.marks = updates.marks;
-      if (updates.order_number !== undefined) supabaseUpdates.order_number = updates.order_number;
-      supabaseUpdates.starter_templates = mergedTemplates;
+        const supabaseUpdates: any = {};
+        if (updates.title !== undefined) supabaseUpdates.title = updates.title;
+        if (updates.description !== undefined) supabaseUpdates.description = updates.description;
+        if (updates.difficulty !== undefined) supabaseUpdates.difficulty = updates.difficulty;
+        if (updates.marks !== undefined) supabaseUpdates.marks = updates.marks;
+        if (updates.order_number !== undefined) supabaseUpdates.order_number = updates.order_number;
+        if (updates.section_id !== undefined) supabaseUpdates.section_id = updates.section_id;
+        if (updates.question_type !== undefined) supabaseUpdates.question_type = updates.question_type;
+        if (updates.options !== undefined) supabaseUpdates.options = updates.options;
+        if (updates.correct_option_id !== undefined) supabaseUpdates.correct_option_id = updates.correct_option_id;
+        if (updates.explanation !== undefined) supabaseUpdates.explanation = updates.explanation;
+        if (updates.negative_marks !== undefined) supabaseUpdates.negative_marks = updates.negative_marks;
+        supabaseUpdates.starter_templates = mergedTemplates;
 
-      const { data, error } = await supabase.from('questions').update(supabaseUpdates).eq('id', id).select().single();
-      if (!error && data) {
-        return {
-          ...data,
-          ...updates,
-        } as Question;
+        const { data, error } = await supabase.from('questions').update(supabaseUpdates).eq('id', id).select().single();
+        if (!error && data) {
+          const updatedQ = {
+            ...data,
+            ...updates,
+          } as Question;
+          const idx = this.store.questions.findIndex((q) => q.id === id);
+          if (idx !== -1) this.store.questions[idx] = updatedQ;
+          this.save();
+          return updatedQ;
+        }
+      } catch (err) {
+        console.warn('Supabase updateQuestion fallback:', err);
       }
     }
+
     const idx = this.store.questions.findIndex((q) => q.id === id);
     if (idx === -1) return null;
     this.store.questions[idx] = { ...this.store.questions[idx], ...updates };
@@ -795,8 +1166,9 @@ class Database {
 
   async deleteQuestion(id: string): Promise<boolean> {
     if (isSupabaseConfigured && supabase) {
-      await supabase.from('questions').delete().eq('id', id);
-      return true;
+      try {
+        await supabase.from('questions').delete().eq('id', id);
+      } catch (err) {}
     }
     const initialLen = this.store.questions.length;
     this.store.questions = this.store.questions.filter((q) => q.id !== id);
@@ -805,12 +1177,14 @@ class Database {
     return this.store.questions.length < initialLen;
   }
 
-  async reorderQuestions(examId: string, questionIds: string[]): Promise<boolean> {
+  async reorderQuestions(examId: string, questionIds: string[], sectionId?: string | null): Promise<boolean> {
     for (let i = 0; i < questionIds.length; i++) {
       const qId = questionIds[i];
       const newOrder = i + 1;
       if (isSupabaseConfigured && supabase) {
-        await supabase.from('questions').update({ order_number: newOrder }).eq('id', qId);
+        try {
+          await supabase.from('questions').update({ order_number: newOrder }).eq('id', qId);
+        } catch (err) {}
       }
       const q = this.store.questions.find((x) => x.id === qId);
       if (q) q.order_number = newOrder;
@@ -823,22 +1197,28 @@ class Database {
     const original = await this.getQuestionById(questionId);
     if (!original) return null;
 
-    const existingInExam = await this.getQuestionsByExam(original.exam_id);
+    const existingInExam = await this.getQuestionsByExam(original.exam_id, original.section_id);
     const newOrder = existingInExam.length + 1;
 
     const newQuestion = await this.createQuestion({
       exam_id: original.exam_id,
+      section_id: original.section_id || null,
+      question_type: original.question_type || 'CODING',
       title: `${original.title} (Copy)`,
       description: original.description,
-      input_format: original.input_format,
-      output_format: original.output_format,
-      constraints: original.constraints,
-      examples: original.examples,
       difficulty: original.difficulty,
       marks: original.marks,
       time_limit: original.time_limit || 3000,
       order_number: newOrder,
+      input_format: original.input_format,
+      output_format: original.output_format,
+      constraints: original.constraints,
+      examples: original.examples,
       starter_templates: original.starter_templates || {},
+      options: original.options || [],
+      correct_option_id: original.correct_option_id || '',
+      explanation: original.explanation || '',
+      negative_marks: original.negative_marks || 0,
     });
 
     const originalTcs = await this.getAllTestCasesForExecution(questionId);
@@ -1153,6 +1533,39 @@ class Database {
     return newSub;
   }
 
+  async saveOrUpdateSubmission(subData: Omit<Submission, 'id' | 'submitted_at'>): Promise<Submission> {
+    const existing = this.store.submissions.find(
+      (s) => s.participant_id === subData.participant_id && s.question_id === subData.question_id
+    );
+    if (existing) {
+      existing.score = subData.score;
+      existing.status = subData.status;
+      existing.selected_option_id = subData.selected_option_id;
+      existing.language = subData.language;
+      existing.code = subData.code;
+      existing.passed_test_cases = subData.passed_test_cases;
+      existing.total_test_cases = subData.total_test_cases;
+      existing.execution_time_ms = subData.execution_time_ms;
+      existing.memory_kb = subData.memory_kb;
+      existing.submitted_at = new Date().toISOString();
+      this.save();
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('submissions').update({
+            score: existing.score,
+            status: existing.status,
+            code: existing.code,
+            submitted_at: existing.submitted_at
+          }).eq('id', existing.id);
+        } catch (e) {
+          // ignore error if supabase columns differ
+        }
+      }
+      return existing;
+    }
+    return this.createSubmission(subData);
+  }
+
   // 6. Security Events
   async recordSecurityEvent(
     participantId: string,
@@ -1370,12 +1783,30 @@ class Database {
         }));
     }
 
+    const totalSections = (this.store.sections || []).length;
+    const allQuestions = this.store.questions || [];
+    const totalQuestions = allQuestions.length;
+    const totalMcqs = allQuestions.filter((q) => q.question_type === 'MCQ').length;
+    const totalCoding = allQuestions.filter((q) => q.question_type !== 'MCQ').length;
+
+    const examsByType = {
+      FULL: examsList.filter((e) => !e.exam_type || e.exam_type === 'FULL').length,
+      MCQ: examsList.filter((e) => e.exam_type === 'MCQ').length,
+      CODING: examsList.filter((e) => e.exam_type === 'CODING').length,
+      SECTIONAL: examsList.filter((e) => e.exam_type === 'SECTIONAL').length,
+    };
+
     return {
       totalExams,
       totalStudents,
       totalSubmissions,
       totalViolations,
       activeExams,
+      totalSections,
+      totalQuestions,
+      totalMcqs,
+      totalCoding,
+      examsByType,
       recentExams: examsList.slice(0, 5),
       topPerformers,
     };

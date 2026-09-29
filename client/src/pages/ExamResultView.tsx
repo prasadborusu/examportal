@@ -160,6 +160,59 @@ export const ExamResultView: React.FC = () => {
           </div>
         </div>
 
+        {/* Section Results Breakdown (Requirement 22) */}
+        {result.section_breakdown && result.section_breakdown.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+              <Award className="w-4 h-4 text-[#0B2A5B]" />
+              <span>Section Results</span>
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {result.section_breakdown.map((sec, idx) => (
+                <div
+                  key={sec.section_id || idx}
+                  className="p-5 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Section {idx + 1}
+                      </span>
+                      <h4 className="text-sm font-bold text-slate-900">{sec.section_name}</h4>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                      {sec.question_type}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between pt-2 border-t border-slate-200">
+                    <span className="text-xs text-slate-500">Section Score</span>
+                    <span className="text-lg font-bold font-mono text-[#0B2A5B]">
+                      {sec.score} / {sec.max_marks}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>Questions</span>
+                    <span className="font-semibold text-slate-700">
+                      {sec.questions_answered} / {sec.total_questions} answered
+                    </span>
+                  </div>
+
+                  {sec.question_type !== 'MCQ' && (sec.total_test_cases || 0) > 0 && (
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Passed Test Cases</span>
+                      <span className="font-mono font-semibold text-emerald-600">
+                        {sec.passed_test_cases} / {sec.total_test_cases}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Question-by-Question Breakdown */}
         <div className="space-y-4">
           <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">

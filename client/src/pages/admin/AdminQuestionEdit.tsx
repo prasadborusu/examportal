@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Save,
@@ -19,8 +19,10 @@ import {
   FileCode,
   X,
   Loader2,
+  Check,
+  FileText,
 } from 'lucide-react';
-import { QuestionDifficulty } from '../../types';
+import { QuestionDifficulty, Exam, Section, MCQOption } from '../../types';
 
 interface ExampleItem {
   input: string;
@@ -76,8 +78,15 @@ int main() {
 
 export const AdminQuestionEdit: React.FC = () => {
   const { examId, questionId } = useParams<{ examId: string; questionId?: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const isEditing = Boolean(questionId);
+
+  // Exam and Sections context
+  const [exam, setExam] = useState<Exam | null>(null);
+  const [sections, setSections] = useState<Section[]>([]);
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  const [questionType, setQuestionType] = useState<'CODING' | 'MCQ'>('CODING');
 
   // Form states
   const [title, setTitle] = useState('');
@@ -85,6 +94,19 @@ export const AdminQuestionEdit: React.FC = () => {
   const [marks, setMarks] = useState<number>(10);
   const [timeLimit, setTimeLimit] = useState<number>(3000);
   const [description, setDescription] = useState('');
+
+  // MCQ Form states
+  const [mcqOptions, setMcqOptions] = useState<MCQOption[]>([
+    { id: 'opt-1', text: '' },
+    { id: 'opt-2', text: '' },
+    { id: 'opt-3', text: '' },
+    { id: 'opt-4', text: '' },
+  ]);
+  const [correctOptionId, setCorrectOptionId] = useState<string>('opt-1');
+  const [negativeMarks, setNegativeMarks] = useState<number>(0);
+  const [explanation, setExplanation] = useState<string>('');
+
+  // Coding Form states
   const [inputFormat, setInputFormat] = useState('');
   const [outputFormat, setOutputFormat] = useState('');
   const [constraints, setConstraints] = useState('');
@@ -125,6 +147,59 @@ export const AdminQuestionEdit: React.FC = () => {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  // Load Exam and Section Info
+  useEffect(() => {
+    if (!examId) return;
+
+    fetch(`/api/admin/exams/${examId}`)
+      .then((res) => res.json())
+      .then((ex: Exam) => {
+        setExam(ex);
+        if (!isEditing) {
+          if (ex.exam_type === 'MCQ') {
+            setQuestionType('MCQ');
+            setMarks(2);
+          } else if (ex.exam_type === 'CODING') {
+            setQuestionType('CODING');
+            setMarks(10);
+          }
+        }
+      })
+      .catch(console.error);
+
+    fetch(`/api/admin/exams/${examId}/sections`)
+      .then((res) => res.json())
+      .then((secs: Section[]) => {
+        if (Array.isArray(secs)) {
+          setSections(secs);
+          const paramSecId = searchParams.get('sectionId');
+          if (!isEditing) {
+            if (paramSecId && secs.some((s) => s.id === paramSecId)) {
+              setSelectedSectionId(paramSecId);
+              const foundSec = secs.find((s) => s.id === paramSecId);
+              if (foundSec?.question_type === 'MCQ') {
+                setQuestionType('MCQ');
+                setMarks(2);
+              } else if (foundSec?.question_type === 'CODING') {
+                setQuestionType('CODING');
+                setMarks(foundSec.total_marks > 20 ? 20 : 10);
+              }
+            } else if (secs.length > 0) {
+              setSelectedSectionId(secs[0].id);
+              if (secs[0].question_type === 'MCQ') {
+                setQuestionType('MCQ');
+                setMarks(2);
+              } else if (secs[0].question_type === 'CODING') {
+                setQuestionType('CODING');
+                setMarks(secs[0].total_marks > 20 ? 20 : 10);
+              }
+            }
+          }
+        }
+      })
+      .catch(console.error);
+  }, [examId, isEditing, searchParams]);
+
   // Load existing question if editing, or determine next order if new
   useEffect(() => {
     if (!examId) return;
@@ -139,10 +214,33 @@ export const AdminQuestionEdit: React.FC = () => {
           setMarks(Number(q.marks) || 10);
           setTimeLimit(Number(q.time_limit) || 3000);
           setDescription(q.description || '');
+          setCurrentOrder(Number(q.order_number) || 1);
+
+          if (q.question_type) {
+            setQuestionType(q.question_type);
+          }
+          if (q.section_id) {
+            setSelectedSectionId(q.section_id);
+          }
+
+          // MCQ data
+          if (Array.isArray(q.options) && q.options.length > 0) {
+            setMcqOptions(q.options);
+          }
+          if (q.correct_option_id) {
+            setCorrectOptionId(q.correct_option_id);
+          }
+          if (q.negative_marks !== undefined) {
+            setNegativeMarks(Number(q.negative_marks) || 0);
+          }
+          if (q.explanation) {
+            setExplanation(q.explanation);
+          }
+
+          // Coding data
           setInputFormat(q.input_format || '');
           setOutputFormat(q.output_format || '');
           setConstraints(q.constraints || '');
-          setCurrentOrder(Number(q.order_number) || 1);
 
           if (Array.isArray(q.examples) && q.examples.length > 0) {
             setExamples(q.examples);
@@ -266,26 +364,48 @@ export const AdminQuestionEdit: React.FC = () => {
       return;
     }
     if (!description.trim()) {
-      alert('Please provide a problem statement.');
+      alert('Please provide a problem statement or question description.');
       return;
+    }
+
+    if (questionType === 'MCQ') {
+      const validOptions = mcqOptions.filter((o) => o.text.trim().length > 0);
+      if (validOptions.length < 2) {
+        alert('Multiple choice questions require at least 2 non-empty options.');
+        return;
+      }
+      if (!correctOptionId || !mcqOptions.some((o) => o.id === correctOptionId && o.text.trim())) {
+        alert('Please designate one valid option as the correct answer.');
+        return;
+      }
     }
 
     setSubmitting(true);
     try {
-      const payload = {
+      const payload: any = {
         title: title.trim(),
         description: description.trim(),
-        input_format: inputFormat.trim(),
-        output_format: outputFormat.trim(),
-        constraints: constraints.trim(),
-        examples: examples.filter((ex) => ex.input.trim() || ex.output.trim()),
         difficulty,
-        marks: Number(marks) || 10,
-        time_limit: Number(timeLimit) || 3000,
+        marks: Number(marks) || (questionType === 'MCQ' ? 2 : 10),
         order_number: currentOrder,
-        starter_templates: starterTemplates,
-        test_cases: testCases,
+        section_id: selectedSectionId || null,
+        question_type: questionType,
       };
+
+      if (questionType === 'MCQ') {
+        payload.options = mcqOptions.map((o) => ({ id: o.id, text: o.text.trim() }));
+        payload.correct_option_id = correctOptionId;
+        payload.negative_marks = Number(negativeMarks) || 0;
+        payload.explanation = explanation.trim();
+      } else {
+        payload.time_limit = Number(timeLimit) || 3000;
+        payload.input_format = inputFormat.trim();
+        payload.output_format = outputFormat.trim();
+        payload.constraints = constraints.trim();
+        payload.examples = examples.filter((ex) => ex.input.trim() || ex.output.trim());
+        payload.starter_templates = starterTemplates;
+        payload.test_cases = testCases;
+      }
 
       const url = isEditing
         ? `/api/admin/questions/${questionId}`
@@ -308,15 +428,26 @@ export const AdminQuestionEdit: React.FC = () => {
         // Reset form for next question
         setTitle('');
         setDescription('');
-        setInputFormat('');
-        setOutputFormat('');
-        setConstraints('');
-        setExamples([{ input: '', output: '', explanation: '' }]);
-        setStarterTemplates({ ...defaultStarterTemplates });
-        setTestCases([
-          { input: '', expected_output: '', is_hidden: false, type: 'PUBLIC', marks: 5 },
-          { input: '', expected_output: '', is_hidden: true, type: 'HIDDEN', marks: 5 },
-        ]);
+        if (questionType === 'MCQ') {
+          setMcqOptions([
+            { id: 'opt-1', text: '' },
+            { id: 'opt-2', text: '' },
+            { id: 'opt-3', text: '' },
+            { id: 'opt-4', text: '' },
+          ]);
+          setCorrectOptionId('opt-1');
+          setExplanation('');
+        } else {
+          setInputFormat('');
+          setOutputFormat('');
+          setConstraints('');
+          setExamples([{ input: '', output: '', explanation: '' }]);
+          setStarterTemplates({ ...defaultStarterTemplates });
+          setTestCases([
+            { input: '', expected_output: '', is_hidden: false, type: 'PUBLIC', marks: 5 },
+            { input: '', expected_output: '', is_hidden: true, type: 'HIDDEN', marks: 5 },
+          ]);
+        }
         setCurrentOrder((prev) => prev + 1);
         if (isEditing) {
           navigate(`/admin/exams/${examId}/questions/new`);
@@ -379,23 +510,116 @@ export const AdminQuestionEdit: React.FC = () => {
 
       {/* Form Cards */}
       <div className="space-y-5">
+        {/* CARD 0: Architecture & Section Assignment */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-7 space-y-4">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+            <span className="w-2 h-2 rounded-full bg-[#0B2A5B]" />
+            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+              1. Assessment Section & Question Type
+            </h3>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+            {/* Section Selection */}
+            {sections.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-700">Assign to Section *</label>
+                <select
+                  value={selectedSectionId || ''}
+                  onChange={(e) => {
+                    const secId = e.target.value;
+                    setSelectedSectionId(secId);
+                    const found = sections.find((s) => s.id === secId);
+                    if (found?.question_type === 'MCQ') {
+                      setQuestionType('MCQ');
+                      setMarks(2);
+                    } else if (found?.question_type === 'CODING') {
+                      setQuestionType('CODING');
+                      setMarks(10);
+                    }
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold bg-white text-slate-800 focus:outline-none focus:border-[#0B2A5B]"
+                >
+                  {sections.map((s, idx) => (
+                    <option key={s.id} value={s.id}>
+                      Section {idx + 1}: {s.name} ({s.question_type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Question Format Toggle */}
+            <div className="space-y-1.5">
+              <label className="font-semibold text-slate-700">Question Format *</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={Boolean(
+                    exam?.exam_type === 'MCQ' ||
+                    (selectedSectionId && sections.find((s) => s.id === selectedSectionId)?.question_type === 'MCQ')
+                  )}
+                  onClick={() => {
+                    setQuestionType('CODING');
+                    if (marks === 2) setMarks(10);
+                  }}
+                  className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                    questionType === 'CODING'
+                      ? 'border-purple-600 bg-purple-50 text-purple-800 ring-2 ring-purple-600/10'
+                      : 'border-slate-200 text-slate-600 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  <Code2 className="w-4 h-4" />
+                  <span>Coding Problem</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={Boolean(
+                    exam?.exam_type === 'CODING' ||
+                    (selectedSectionId && sections.find((s) => s.id === selectedSectionId)?.question_type === 'CODING')
+                  )}
+                  onClick={() => {
+                    setQuestionType('MCQ');
+                    if (marks === 10) setMarks(2);
+                  }}
+                  className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                    questionType === 'MCQ'
+                      ? 'border-emerald-600 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-600/10'
+                      : 'border-slate-200 text-slate-600 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Multiple Choice (MCQ)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* CARD 1: Basic Information */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-7 space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <span className="w-2 h-2 rounded-full bg-[#0B2A5B]" />
             <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-              1. Basic Information
+              2. Problem Details & Marks
             </h3>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 text-xs">
             {/* Title */}
             <div className="sm:col-span-12 space-y-1.5">
-              <label className="font-semibold text-slate-700">Question Title *</label>
+              <label className="font-semibold text-slate-700">
+                {questionType === 'MCQ' ? 'Question Statement / Prompt *' : 'Question Title *'}
+              </label>
               <input
                 type="text"
                 required
-                placeholder="e.g. Reverse Linked List, Two Sum, Binary Tree Level Order"
+                placeholder={
+                  questionType === 'MCQ'
+                    ? 'e.g. Which of the following data structures provides O(1) average lookup time?'
+                    : 'e.g. Reverse Linked List, Two Sum, Binary Tree Level Order'
+                }
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-[#0B2A5B]"
@@ -403,7 +627,7 @@ export const AdminQuestionEdit: React.FC = () => {
             </div>
 
             {/* Difficulty */}
-            <div className="sm:col-span-4 space-y-1.5">
+            <div className={`space-y-1.5 ${questionType === 'CODING' ? 'sm:col-span-4' : 'sm:col-span-6'}`}>
               <label className="font-semibold text-slate-700">Difficulty Level *</label>
               <select
                 value={difficulty}
@@ -411,13 +635,13 @@ export const AdminQuestionEdit: React.FC = () => {
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold bg-white text-slate-800 focus:outline-none focus:border-[#0B2A5B]"
               >
                 <option value="Easy">Easy (Fundamentals)</option>
-                <option value="Medium">Medium (Intermediate Algorithmic)</option>
-                <option value="Hard">Hard (Advanced DS & Dynamic Programming)</option>
+                <option value="Medium">Medium (Intermediate)</option>
+                <option value="Hard">Hard (Advanced)</option>
               </select>
             </div>
 
             {/* Marks */}
-            <div className="sm:col-span-4 space-y-1.5">
+            <div className={`space-y-1.5 ${questionType === 'CODING' ? 'sm:col-span-4' : 'sm:col-span-6'}`}>
               <label className="font-semibold text-slate-700">Marks Assigned *</label>
               <input
                 type="number"
@@ -429,40 +653,48 @@ export const AdminQuestionEdit: React.FC = () => {
               />
             </div>
 
-            {/* Time Limit */}
-            <div className="sm:col-span-4 space-y-1.5">
-              <label className="font-semibold text-slate-700">CPU Time Limit (ms)</label>
-              <input
-                type="number"
-                min="500"
-                max="3000"
-                step="500"
-                value={timeLimit}
-                onChange={(e) => setTimeLimit(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:border-[#0B2A5B]"
-              />
-              <span className="text-[10px] text-slate-400">Default: 3000ms max allowed by Piston</span>
-            </div>
+            {/* Time Limit for Coding */}
+            {questionType === 'CODING' && (
+              <div className="sm:col-span-4 space-y-1.5">
+                <label className="font-semibold text-slate-700">CPU Time Limit (ms)</label>
+                <input
+                  type="number"
+                  min="500"
+                  max="3000"
+                  step="500"
+                  value={timeLimit}
+                  onChange={(e) => setTimeLimit(Number(e.target.value))}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:border-[#0B2A5B]"
+                />
+                <span className="text-[10px] text-slate-400">Default: 3000ms max allowed by Piston</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* CARD 2: Problem Statement */}
+        {/* CARD 2: Description / Question Statement Body */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-7 space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <span className="w-2 h-2 rounded-full bg-[#0B2A5B]" />
             <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-              2. Problem Statement *
+              {questionType === 'MCQ' ? '3. Extended Context & Code Snippets' : '3. Problem Statement *'}
             </h3>
           </div>
 
           <div className="space-y-1.5 text-xs">
             <label className="font-semibold text-slate-700">
-              Description & Detailed Task (Markdown supported)
+              {questionType === 'MCQ'
+                ? 'Additional description, code block, or question context (Optional)'
+                : 'Description & Detailed Task (Markdown supported)'}
             </label>
             <textarea
-              rows={6}
-              required
-              placeholder="Clearly state the algorithmic problem, input rules, and expected behavior..."
+              rows={questionType === 'MCQ' ? 4 : 6}
+              required={questionType === 'CODING'}
+              placeholder={
+                questionType === 'MCQ'
+                  ? 'Paste code snippets or additional context if needed for this question...'
+                  : 'Clearly state the algorithmic problem, input rules, and expected behavior...'
+              }
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:border-[#0B2A5B] leading-relaxed"
@@ -470,53 +702,184 @@ export const AdminQuestionEdit: React.FC = () => {
           </div>
         </div>
 
-        {/* CARD 3: Input / Output Format & Constraints */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-7 space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-            <span className="w-2 h-2 rounded-full bg-[#0B2A5B]" />
-            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-              3. Input / Output Format & Constraints
-            </h3>
+        {/* IF MCQ: Render Options Builder Card */}
+        {questionType === 'MCQ' && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-7 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                  4. MCQ Options & Correct Answer
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-500 font-medium">
+                Click radio icon to designate the single correct answer
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {mcqOptions.map((opt, idx) => {
+                const isCorrect = correctOptionId === opt.id;
+                const letter = String.fromCharCode(65 + idx);
+                return (
+                  <div
+                    key={opt.id}
+                    className={`p-3.5 rounded-xl border transition flex items-center gap-3 ${
+                      isCorrect
+                        ? 'border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-500/10'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    {/* Radio Button */}
+                    <button
+                      type="button"
+                      onClick={() => setCorrectOptionId(opt.id)}
+                      className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 cursor-pointer ${
+                        isCorrect
+                          ? 'border-emerald-600 bg-emerald-600 text-white'
+                          : 'border-slate-300 text-transparent hover:border-emerald-400'
+                      }`}
+                      title={isCorrect ? 'Correct Answer' : 'Mark as Correct Answer'}
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    </button>
+
+                    {/* Letter Badge */}
+                    <span className="w-6 h-6 rounded-md bg-slate-100 font-bold text-slate-700 text-xs flex items-center justify-center shrink-0">
+                      {letter}
+                    </span>
+
+                    {/* Option Text Input */}
+                    <input
+                      type="text"
+                      required
+                      placeholder={`Option ${letter} statement...`}
+                      value={opt.text}
+                      onChange={(e) => {
+                        const updated = [...mcqOptions];
+                        updated[idx].text = e.target.value;
+                        setMcqOptions(updated);
+                      }}
+                      className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs focus:outline-none focus:border-[#0B2A5B]"
+                    />
+
+                    {/* Delete Option */}
+                    {mcqOptions.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = mcqOptions.filter((_, i) => i !== idx);
+                          setMcqOptions(updated);
+                          if (correctOptionId === opt.id) {
+                            setCorrectOptionId(updated[0]?.id || '');
+                          }
+                        }}
+                        className="p-1.5 rounded-lg border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 cursor-pointer"
+                        title="Delete Option"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Add Option Button */}
+              {mcqOptions.length < 8 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newId = `opt-${Date.now()}-${mcqOptions.length + 1}`;
+                    setMcqOptions([...mcqOptions, { id: newId, text: '' }]);
+                  }}
+                  className="w-full py-2.5 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:border-emerald-600 hover:text-emerald-700 hover:bg-emerald-50/20 font-semibold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Option ({String.fromCharCode(65 + mcqOptions.length)})</span>
+                </button>
+              )}
+            </div>
+
+            {/* Negative Marks & Explanation */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100 text-xs">
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-700">Negative Marks for Wrong Selection</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="10"
+                  step="0.25"
+                  value={negativeMarks}
+                  onChange={(e) => setNegativeMarks(Number(e.target.value))}
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:border-[#0B2A5B]"
+                />
+                <span className="text-[10px] text-slate-400">e.g. 0.5 marks deducted if incorrect</span>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-700">Explanation / Solution Note (Optional)</label>
+                <textarea
+                  rows={2}
+                  placeholder="Rationale shown to coordinators and post-exam review..."
+                  value={explanation}
+                  onChange={(e) => setExplanation(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-[#0B2A5B]"
+                />
+              </div>
+            </div>
           </div>
+        )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            {/* Input Format */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-slate-700">Input Format</label>
-              <textarea
-                rows={3}
-                placeholder="e.g. First line contains integer n. Second line contains n space-separated integers."
-                value={inputFormat}
-                onChange={(e) => setInputFormat(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-[#0B2A5B]"
-              />
-            </div>
+        {/* IF CODING: Render Input/Output Format, Constraints, Examples, Templates, Test Cases */}
+        {questionType === 'CODING' && (
+          <>
+            {/* CARD 4: Input / Output Format & Constraints */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-7 space-y-4">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                <span className="w-2 h-2 rounded-full bg-[#0B2A5B]" />
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                  4. Input / Output Format & Constraints
+                </h3>
+              </div>
 
-            {/* Output Format */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-slate-700">Output Format</label>
-              <textarea
-                rows={3}
-                placeholder="e.g. Print single integer representing the maximum subarray sum."
-                value={outputFormat}
-                onChange={(e) => setOutputFormat(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-[#0B2A5B]"
-              />
-            </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                {/* Input Format */}
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">Input Format</label>
+                  <textarea
+                    rows={3}
+                    placeholder="e.g. First line contains integer n. Second line contains n space-separated integers."
+                    value={inputFormat}
+                    onChange={(e) => setInputFormat(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-[#0B2A5B]"
+                  />
+                </div>
 
-            {/* Constraints */}
-            <div className="sm:col-span-2 space-y-1.5">
-              <label className="font-semibold text-slate-700">Constraints</label>
-              <textarea
-                rows={2}
-                placeholder="e.g. 1 <= n <= 10^5, -10^9 <= a[i] <= 10^9"
-                value={constraints}
-                onChange={(e) => setConstraints(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono focus:outline-none focus:border-[#0B2A5B]"
-              />
+                {/* Output Format */}
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">Output Format</label>
+                  <textarea
+                    rows={3}
+                    placeholder="e.g. Print single integer representing the maximum subarray sum."
+                    value={outputFormat}
+                    onChange={(e) => setOutputFormat(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-[#0B2A5B]"
+                  />
+                </div>
+
+                {/* Constraints */}
+                <div className="sm:col-span-2 space-y-1.5">
+                  <label className="font-semibold text-slate-700">Constraints</label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. 1 <= n <= 10^5, -10^9 <= a[i] <= 10^9"
+                    value={constraints}
+                    onChange={(e) => setConstraints(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono focus:outline-none focus:border-[#0B2A5B]"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
 
         {/* CARD 4: Examples */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-7 space-y-4">
@@ -782,6 +1145,8 @@ export const AdminQuestionEdit: React.FC = () => {
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
 
       {/* Sticky Bottom Actions Bar */}

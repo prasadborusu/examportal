@@ -3,10 +3,15 @@ export type ParticipantStatus = 'REGISTERED' | 'CODING' | 'IDLE' | 'WARNING' | '
 export type SubmissionStatus = 'Accepted' | 'Partial Score' | 'Wrong Answer' | 'Compilation Error' | 'Runtime Error' | 'Time Limit Exceeded';
 export type QuestionDifficulty = 'Easy' | 'Medium' | 'Hard';
 
+export type ExamType = 'FULL' | 'MCQ' | 'CODING' | 'SECTIONAL';
+export type SectionQuestionType = 'MCQ' | 'CODING' | 'MIXED';
+export type SectionNavigationMode = 'FREE' | 'SEQUENTIAL';
+
 export interface Exam {
   id: string;
   title: string;
   description: string;
+  exam_type?: ExamType;
   passkey?: string;
   duration_minutes: number;
   total_marks: number;
@@ -16,6 +21,25 @@ export interface Exam {
   max_violations: number;
   allowed_languages: string[];
   created_at: string;
+  updated_at?: string;
+}
+
+export interface Section {
+  id: string;
+  exam_id: string;
+  name: string;
+  description?: string;
+  question_type: SectionQuestionType;
+  duration_minutes: number;
+  total_marks: number;
+  question_limit?: number;
+  navigation_mode: SectionNavigationMode;
+  lock_after_submission: boolean;
+  allow_previous_section: boolean;
+  order_number: number;
+  questions_count?: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface QuestionExample {
@@ -24,27 +48,41 @@ export interface QuestionExample {
   explanation?: string;
 }
 
+export interface MCQOption {
+  id: string;
+  text: string;
+}
+
 export interface Question {
   id: string;
   exam_id: string;
+  section_id?: string | null;
+  question_type?: 'CODING' | 'MCQ';
   title: string;
   description: string;
-  input_format?: string;
-  output_format?: string;
-  constraints?: string;
-  examples?: QuestionExample[];
   difficulty: QuestionDifficulty;
   marks: number;
   time_limit?: number;
   order_number: number;
-  starter_templates: {
+  // Coding fields
+  input_format?: string;
+  output_format?: string;
+  constraints?: string;
+  examples?: QuestionExample[];
+  starter_templates?: {
     java?: string;
     cpp?: string;
     python?: string;
     c?: string;
   };
   test_cases?: TestCase[];
+  // MCQ fields
+  options?: MCQOption[];
+  correct_option_id?: string;
+  explanation?: string;
+  negative_marks?: number;
   created_at?: string;
+  updated_at?: string;
 }
 
 export interface TestCase {
@@ -66,6 +104,16 @@ export interface Participant {
   email: string;
   status: ParticipantStatus;
   current_question_id?: string;
+  current_section_id?: string;
+  section_states?: Record<
+    string,
+    {
+      status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'LOCKED';
+      started_at?: string;
+      submitted_at?: string;
+      time_spent_seconds?: number;
+    }
+  >;
   started_at: string;
   submitted_at?: string;
   violations_count: number;
@@ -77,10 +125,16 @@ export interface Submission {
   student_name?: string;
   roll_number?: string;
   exam_id?: string;
+  section_id?: string;
   question_id: string;
   question_title?: string;
-  language: string;
-  code: string;
+  question_type?: 'CODING' | 'MCQ';
+  // Coding submission fields
+  language?: string;
+  code?: string;
+  // MCQ submission fields
+  selected_option_id?: string;
+  // Common grading fields
   status: SubmissionStatus;
   score: number;
   passed_test_cases: number;
@@ -122,12 +176,26 @@ export interface ExamResult {
   submitted_at: string;
   breakdown: Array<{
     question_id: string;
+    section_id?: string;
     question_title: string;
+    question_type?: 'CODING' | 'MCQ';
     score: number;
     max_marks: number;
     status: SubmissionStatus;
     passed_cases: number;
     total_cases: number;
+    selected_option_id?: string;
+  }>;
+  section_breakdown?: Array<{
+    section_id?: string;
+    section_name: string;
+    question_type: string;
+    score: number;
+    max_marks: number;
+    questions_answered: number;
+    total_questions: number;
+    passed_test_cases?: number;
+    total_test_cases?: number;
   }>;
 }
 

@@ -26,6 +26,7 @@ export const AdminExamReview: React.FC = () => {
 
   const [exam, setExam] = useState<Exam | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
+  const [sections, setSections] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isActivateModalOpen, setIsActivateModalOpen] = useState(false);
   const [activating, setActivating] = useState(false);
@@ -36,9 +37,10 @@ export const AdminExamReview: React.FC = () => {
     if (!examId) return;
     try {
       setLoading(true);
-      const [examRes, questionsRes] = await Promise.all([
+      const [examRes, questionsRes, sectionsRes] = await Promise.all([
         fetch(`/api/admin/exams/${examId}`),
         fetch(`/api/admin/exams/${examId}/questions`),
+        fetch(`/api/admin/exams/${examId}/sections`),
       ]);
 
       if (examRes.ok) {
@@ -48,6 +50,9 @@ export const AdminExamReview: React.FC = () => {
         const qList = await questionsRes.json();
         qList.sort((a: any, b: any) => a.order_number - b.order_number);
         setQuestions(qList);
+      }
+      if (sectionsRes.ok) {
+        setSections(await sectionsRes.json());
       }
     } catch (err) {
       console.error(err);
@@ -64,6 +69,13 @@ export const AdminExamReview: React.FC = () => {
   const totalConfiguredMarks = questions.reduce((sum, q) => sum + (Number(q.marks) || 0), 0);
   const examTotalMarks = exam?.total_marks || 100;
   const isMarksValid = totalConfiguredMarks === examTotalMarks;
+
+  const isSectional = exam?.exam_type === 'SECTIONAL';
+  const isMcqExam = exam?.exam_type === 'MCQ';
+  const isCodingExam = exam?.exam_type === 'CODING';
+
+  const mcqQuestions = questions.filter((q) => q.question_type === 'MCQ');
+  const codingQuestions = questions.filter((q) => q.question_type !== 'MCQ');
 
   // Validation Checklist Items
   const checklist = [
@@ -82,12 +94,38 @@ export const AdminExamReview: React.FC = () => {
       passed: Boolean(exam?.passkey && exam.passkey.length === 4),
       fixLink: `/admin/exams`,
     },
-    {
-      title: 'Questions Added',
-      passed: questions.length > 0,
-      errorMsg: 'No questions added yet. Add at least 1 coding problem.',
-      fixLink: `/admin/exams/${examId}/questions/new`,
-    },
+    ...(isSectional
+      ? [
+          {
+            title: 'Assessment Sections Configured',
+            passed: sections.length > 0,
+            errorMsg: 'Sectional assessment requires at least 1 section.',
+            fixLink: `/admin/exams/${examId}/questions`,
+          },
+          {
+            title: 'Every Section Contains Questions',
+            passed: sections.length > 0 && sections.every((s) => questions.some((q) => q.section_id === s.id)),
+            errorMsg: 'One or more sections have no questions added.',
+            fixLink: `/admin/exams/${examId}/questions`,
+          },
+        ]
+      : [
+          {
+            title: 'Questions Added',
+            passed:
+              isMcqExam
+                ? mcqQuestions.length > 0
+                : isCodingExam
+                ? codingQuestions.length > 0
+                : questions.length > 0,
+            errorMsg: isMcqExam
+              ? 'No MCQ questions added yet.'
+              : isCodingExam
+              ? 'No coding problems added yet.'
+              : 'No questions added yet. Add at least 1 question.',
+            fixLink: `/admin/exams/${examId}/questions/new`,
+          },
+        ]),
     {
       title: 'Question Marks Match Exam Total',
       passed: isMarksValid,
@@ -97,26 +135,38 @@ export const AdminExamReview: React.FC = () => {
           : undefined,
       fixLink: `/admin/exams/${examId}/questions`,
     },
-    {
-      title: 'Public Test Cases Configured',
-      passed:
-        questions.length > 0 &&
-        questions.every((q) =>
-          (q.test_cases || []).some((tc: any) => !tc.is_hidden && tc.type !== 'HIDDEN')
-        ),
-      errorMsg: 'One or more problems do not have public test cases for dry runs.',
-      fixLink: `/admin/exams/${examId}/questions`,
-    },
-    {
-      title: 'Hidden Evaluation Test Cases Configured',
-      passed:
-        questions.length > 0 &&
-        questions.every((q) =>
-          (q.test_cases || []).some((tc: any) => tc.is_hidden || tc.type === 'HIDDEN')
-        ),
-      errorMsg: 'One or more problems have no hidden test cases configured.',
-      fixLink: `/admin/exams/${examId}/questions`,
-    },
+    ...(mcqQuestions.length > 0
+      ? [
+          {
+            title: 'MCQ Answer Keys Designated',
+            passed: mcqQuestions.every(
+              (q) => Array.isArray(q.options) && q.options.length >= 2 && Boolean(q.correct_option_id)
+            ),
+            errorMsg: 'One or more MCQs do not have at least 2 options or a marked correct answer.',
+            fixLink: `/admin/exams/${examId}/questions`,
+          },
+        ]
+      : []),
+    ...(codingQuestions.length > 0
+      ? [
+          {
+            title: 'Public Test Cases Configured',
+            passed: codingQuestions.every((q) =>
+              (q.test_cases || []).some((tc: any) => !tc.is_hidden && tc.type !== 'HIDDEN')
+            ),
+            errorMsg: 'One or more coding problems do not have public test cases for dry runs.',
+            fixLink: `/admin/exams/${examId}/questions`,
+          },
+          {
+            title: 'Hidden Evaluation Test Cases Configured',
+            passed: codingQuestions.every((q) =>
+              (q.test_cases || []).some((tc: any) => tc.is_hidden || tc.type === 'HIDDEN')
+            ),
+            errorMsg: 'One or more coding problems have no hidden test cases configured.',
+            fixLink: `/admin/exams/${examId}/questions`,
+          },
+        ]
+      : []),
   ];
 
   const allPassed = checklist.every((item) => item.passed);

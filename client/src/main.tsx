@@ -4,16 +4,23 @@ import './index.css'
 import App from './App'
 
 // Dynamic API URL for Vercel -> Render cross-origin deployment
-const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
-if (apiBase) {
-  const originalFetch = window.fetch;
-  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    if (typeof input === 'string' && input.startsWith('/api')) {
-      input = `${apiBase}${input}`;
-    }
-    return originalFetch(input, init);
-  };
-}
+export const getApiBase = () => {
+  if (typeof window === 'undefined') return '';
+  const custom = localStorage.getItem('ANVESHANA_API_URL');
+  if (custom && custom.trim()) {
+    return custom.trim().replace(/\/+$/, '');
+  }
+  return (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+};
+
+const originalFetch = window.fetch;
+window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  const base = getApiBase();
+  if (base && typeof input === 'string' && input.startsWith('/api')) {
+    input = `${base}${input}`;
+  }
+  return originalFetch(input, init);
+};
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Copy, Check, Save, ArrowLeft } from 'lucide-react';
+import { RefreshCw, Copy, Check, Save, ArrowLeft, AlertTriangle, Loader2, Link2 } from 'lucide-react';
 
 export const AdminCreateExam: React.FC = () => {
   const navigate = useNavigate();
@@ -15,6 +15,8 @@ export const AdminCreateExam: React.FC = () => {
   const [passkey, setPasskey] = useState(generatePasskey());
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [backendUrlInput, setBackendUrlInput] = useState(() => localStorage.getItem('ANVESHANA_API_URL') || '');
 
   const handleCopy = () => {
     navigator.clipboard.writeText(passkey);
@@ -22,19 +24,35 @@ export const AdminCreateExam: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title) return;
+  const handleSaveBackendUrl = (urlToSave?: string) => {
+    const val = (urlToSave || backendUrlInput).trim().replace(/\/+$/, '');
+    if (!val) {
+      localStorage.removeItem('ANVESHANA_API_URL');
+      setError('Cleared custom backend URL. Reverted to default.');
+      return;
+    }
+    localStorage.setItem('ANVESHANA_API_URL', val);
+    setError(null);
+    // Trigger submission with new URL
+    handleSubmitDirect(val);
+  };
+
+  const handleSubmitDirect = async (overrideUrl?: string) => {
+    if (!title.trim()) return;
 
     setLoading(true);
+    setError(null);
     try {
-      const res = await fetch('/api/admin/exams', {
+      const baseUrl = overrideUrl || localStorage.getItem('ANVESHANA_API_URL') || '';
+      const endpoint = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/api/admin/exams` : '/api/admin/exams';
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title,
-          description,
-          passkey,
+          title: title.trim(),
+          description: description.trim(),
+          passkey: passkey.trim(),
           duration_minutes: Number(duration),
           total_marks: Number(totalMarks),
           max_violations: Number(maxViolations),
@@ -42,15 +60,32 @@ export const AdminCreateExam: React.FC = () => {
           allowed_languages: ['java', 'c++', 'python', 'c'],
         }),
       });
-      if (res.ok) {
-        const newExam = await res.json();
-        navigate(`/admin/exams/${newExam.id}/questions`);
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(
+          'Received HTML instead of JSON from server. Your Vercel frontend is not yet connected to your Render backend API.'
+        );
       }
-    } catch (err) {
-      console.error(err);
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(errorData?.error || `Server returned error status ${res.status}`);
+      }
+
+      const newExam = await res.json();
+      navigate(`/admin/exams/${newExam.id}/questions`);
+    } catch (err: any) {
+      console.error('Failed to create exam:', err);
+      setError(err.message || 'Failed to create exam. Could not reach backend server.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSubmitDirect();
   };
 
   return (
@@ -72,7 +107,43 @@ export const AdminCreateExam: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-8">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-8 space-y-6">
+        {/* Backend Connection Error Banner & Direct URL Connector */}
+        {error && (
+          <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-3">
+            <div className="flex items-center gap-2 font-bold text-sm text-rose-900">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>Backend Connection Notice</span>
+            </div>
+            <p className="leading-relaxed opacity-90">{error}</p>
+            <div className="p-3 bg-white rounded-xl border border-rose-200/80 space-y-2">
+              <label className="font-semibold text-slate-700 flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5 text-blue-600" />
+                <span>Render Backend API URL:</span>
+              </label>
+              <div className="flex flex-col sm:flex-row items-center gap-2">
+                <input
+                  type="url"
+                  placeholder="https://anveshana-backend.onrender.com"
+                  value={backendUrlInput}
+                  onChange={(e) => setBackendUrlInput(e.target.value)}
+                  className="flex-1 w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs focus:outline-none focus:border-blue-500 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleSaveBackendUrl()}
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-[#0B2A5B] text-white font-bold hover:bg-blue-900 transition whitespace-nowrap cursor-pointer text-xs"
+                >
+                  Save & Connect
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Tip: Paste your Render web service URL here. It will save to your browser and connect immediately without requiring a redeploy.
+              </p>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6 text-xs">
           {/* Title */}
           <div className="space-y-1.5">
@@ -181,9 +252,10 @@ export const AdminCreateExam: React.FC = () => {
             <button
               type="submit"
               disabled={loading}
-              className="px-6 py-2.5 rounded-xl font-bold bg-[#0B2A5B] text-white hover:bg-[#123773] transition flex items-center gap-2"
+              className="px-6 py-2.5 rounded-xl font-bold bg-[#0B2A5B] text-white hover:bg-[#123773] transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
-              <span>{loading ? 'Creating...' : 'Create Exam & Add Questions →'}</span>
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              <span>{loading ? 'Creating Assessment...' : 'Create Exam & Add Questions →'}</span>
             </button>
           </div>
         </form>

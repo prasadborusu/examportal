@@ -10,7 +10,7 @@ export const getApiBase = () => {
   if (custom && custom.trim()) {
     return custom.trim().replace(/\/+$/, '');
   }
-  return (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+  return (import.meta.env.VITE_API_URL || 'https://examportal-a5f9.onrender.com').trim().replace(/\/+$/, '');
 };
 
 const originalFetch = window.fetch;

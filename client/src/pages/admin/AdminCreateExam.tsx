@@ -16,7 +16,9 @@ export const AdminCreateExam: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [backendUrlInput, setBackendUrlInput] = useState(() => localStorage.getItem('ANVESHANA_API_URL') || '');
+  const [backendUrlInput, setBackendUrlInput] = useState(
+    () => localStorage.getItem('ANVESHANA_API_URL') || (import.meta.env.VITE_API_URL || 'https://examportal-a5f9.onrender.com')
+  );
 
   const handleCopy = () => {
     navigator.clipboard.writeText(passkey);
@@ -43,8 +45,11 @@ export const AdminCreateExam: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const baseUrl = overrideUrl || localStorage.getItem('ANVESHANA_API_URL') || '';
-      const endpoint = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/api/admin/exams` : '/api/admin/exams';
+      const baseUrl =
+        overrideUrl ||
+        localStorage.getItem('ANVESHANA_API_URL') ||
+        (import.meta.env.VITE_API_URL || 'https://examportal-a5f9.onrender.com').trim().replace(/\/+$/, '');
+      const endpoint = `${baseUrl}/api/admin/exams`;
 
       const res = await fetch(endpoint, {
         method: 'POST',

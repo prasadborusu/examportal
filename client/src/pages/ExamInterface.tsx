@@ -1078,112 +1078,124 @@ export const ExamInterface: React.FC = () => {
                     ) : (
                       <>
                         {/* High-Impact Verdict Banner */}
-                        {submissionResult && (
-                          <div
-                            className={`p-2.5 sm:p-3 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs ${
-                              submissionResult.status === 'Accepted'
-                                ? 'bg-gradient-to-r from-emerald-50 via-emerald-50/60 to-white border-emerald-200 text-emerald-900'
-                                : submissionResult.status === 'Compilation Error'
-                                ? 'bg-gradient-to-r from-rose-50 via-rose-50/60 to-white border-rose-200 text-rose-900'
-                                : submissionResult.status === 'Runtime Error'
-                                ? 'bg-gradient-to-r from-purple-50 via-purple-50/60 to-white border-purple-200 text-purple-900'
-                                : submissionResult.status === 'Partial Score'
-                                ? 'bg-gradient-to-r from-amber-50 via-amber-50/60 to-white border-amber-200 text-amber-900'
-                                : 'bg-gradient-to-r from-rose-50 via-rose-50/60 to-white border-rose-200 text-rose-900'
-                            }`}
-                          >
-                            {/* Left: Verdict Status Badge & Icon */}
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                                  submissionResult.status === 'Accepted'
-                                    ? 'bg-emerald-600 text-white'
-                                    : submissionResult.status === 'Compilation Error' || submissionResult.status === 'Runtime Error'
-                                    ? 'bg-rose-600 text-white'
-                                    : submissionResult.status === 'Partial Score'
-                                    ? 'bg-amber-500 text-white'
-                                    : 'bg-rose-600 text-white'
-                                }`}
-                              >
-                                {submissionResult.status === 'Accepted' ? (
-                                  <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
-                                ) : submissionResult.status === 'Compilation Error' ? (
-                                  <AlertOctagon className="w-5 h-5 stroke-[2.5]" />
-                                ) : submissionResult.status === 'Partial Score' ? (
-                                  <Check className="w-5 h-5 stroke-[2.5]" />
-                                ) : (
-                                  <XCircle className="w-5 h-5 stroke-[2.5]" />
-                                )}
-                              </div>
+                        {submissionResult && (() => {
+                          const isAllPassed =
+                            submissionResult.status === 'Accepted' ||
+                            submissionResult.status === 'All Public Tests Passed' ||
+                            (submissionResult.totalTestCases !== undefined &&
+                              submissionResult.totalTestCases > 0 &&
+                              submissionResult.passedTestCases === submissionResult.totalTestCases);
+                          const isPartial = submissionResult.status === 'Partial Score';
+                          const isCompError = submissionResult.status === 'Compilation Error';
+                          const isRuntimeError = submissionResult.status === 'Runtime Error';
 
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <h3 className="text-sm font-extrabold tracking-tight">
-                                    {submissionResult.status === 'Accepted'
-                                      ? 'Solution Accepted ✓'
-                                      : submissionResult.status === 'Compilation Error'
-                                      ? 'Compilation Error'
-                                      : submissionResult.status === 'Runtime Error'
-                                      ? 'Runtime Exception'
-                                      : submissionResult.status === 'Partial Score'
-                                      ? 'Partial Score Awarded'
-                                      : submissionResult.status || 'Wrong Answer'}
-                                  </h3>
-                                  {submissionResult.score !== undefined && submissionResult.maxMarks !== undefined && (
-                                    <span
-                                      className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold font-mono ${
-                                        submissionResult.status === 'Accepted'
-                                          ? 'bg-emerald-200/70 text-emerald-900'
-                                          : 'bg-slate-200 text-slate-800'
-                                      }`}
-                                    >
-                                      Score: {submissionResult.score} / {submissionResult.maxMarks}
-                                    </span>
+                          return (
+                            <div
+                              className={`p-2.5 sm:p-3 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs ${
+                                isAllPassed
+                                  ? 'bg-gradient-to-r from-emerald-50 via-emerald-50/60 to-white border-emerald-300 text-emerald-950'
+                                  : isCompError
+                                  ? 'bg-gradient-to-r from-rose-50 via-rose-50/60 to-white border-rose-300 text-rose-950'
+                                  : isRuntimeError
+                                  ? 'bg-gradient-to-r from-purple-50 via-purple-50/60 to-white border-purple-300 text-purple-950'
+                                  : isPartial
+                                  ? 'bg-gradient-to-r from-amber-50 via-amber-50/60 to-white border-amber-300 text-amber-950'
+                                  : 'bg-gradient-to-r from-rose-50 via-rose-50/60 to-white border-rose-300 text-rose-950'
+                              }`}
+                            >
+                              {/* Left: Verdict Status Badge & Icon */}
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-xs ${
+                                    isAllPassed
+                                      ? 'bg-emerald-600 text-white'
+                                      : isCompError || isRuntimeError
+                                      ? 'bg-rose-600 text-white'
+                                      : isPartial
+                                      ? 'bg-amber-500 text-white'
+                                      : 'bg-rose-600 text-white'
+                                  }`}
+                                >
+                                  {isAllPassed ? (
+                                    <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+                                  ) : isCompError ? (
+                                    <AlertOctagon className="w-5 h-5 stroke-[2.5]" />
+                                  ) : isPartial ? (
+                                    <Check className="w-5 h-5 stroke-[2.5]" />
+                                  ) : (
+                                    <XCircle className="w-5 h-5 stroke-[2.5]" />
                                   )}
                                 </div>
-                                <p className="text-[11px] opacity-80 mt-0.5">
-                                  {submissionResult.status === 'Accepted'
-                                    ? 'All test cases passed successfully within runtime and memory limits.'
-                                    : submissionResult.status === 'Compilation Error'
-                                    ? 'Code failed to compile. Inspect the Errors tab for diagnostics.'
-                                    : 'Review individual test cases below to resolve mismatches.'}
-                                </p>
-                              </div>
-                            </div>
 
-                            {/* Right: Progress bar & Test Counts */}
-                            {submissionResult.totalTestCases !== undefined && (
-                              <div className="flex flex-col sm:items-end gap-1.5 shrink-0 min-w-[160px]">
-                                <div className="flex items-center justify-between sm:justify-end gap-2 text-xs font-semibold">
-                                  <span>Passed:</span>
-                                  <span className="font-mono font-bold">
-                                    {submissionResult.passedTestCases} / {submissionResult.totalTestCases} Test Cases
-                                  </span>
-                                </div>
-                                <div className="w-full sm:w-44 h-2 bg-black/10 rounded-full overflow-hidden">
-                                  <div
-                                    className={`h-full transition-all duration-500 ${
-                                      submissionResult.passedTestCases === submissionResult.totalTestCases
-                                        ? 'bg-emerald-600'
-                                        : 'bg-amber-500'
-                                    }`}
-                                    style={{
-                                      width: `${
-                                        submissionResult.totalTestCases > 0
-                                          ? Math.round(
-                                              ((submissionResult.passedTestCases || 0) /
-                                                submissionResult.totalTestCases) *
-                                                100
-                                            )
-                                          : 0
-                                      }%`,
-                                    }}
-                                  />
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h3 className="text-sm font-extrabold tracking-tight">
+                                      {isAllPassed
+                                        ? (submissionResult.status === 'Accepted' ? 'Solution Accepted ✓' : 'All Public Tests Passed ✓')
+                                        : isCompError
+                                        ? 'Compilation Error'
+                                        : isRuntimeError
+                                        ? 'Runtime Exception'
+                                        : isPartial
+                                        ? 'Partial Score Awarded'
+                                        : submissionResult.status || 'Some Tests Failed'}
+                                    </h3>
+                                    {submissionResult.score !== undefined && submissionResult.maxMarks !== undefined && (
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold font-mono ${
+                                          isAllPassed
+                                            ? 'bg-emerald-200/70 text-emerald-900'
+                                            : 'bg-slate-200 text-slate-800'
+                                        }`}
+                                      >
+                                        Score: {submissionResult.score} / {submissionResult.maxMarks}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] opacity-80 mt-0.5">
+                                    {isAllPassed
+                                      ? 'All test cases passed successfully! Code output matches expected format.'
+                                      : isCompError
+                                      ? 'Code failed to compile. Inspect the Errors tab for diagnostics.'
+                                      : isRuntimeError
+                                      ? 'Runtime exception occurred during execution.'
+                                      : 'Review individual test cases below to resolve mismatches.'}
+                                  </p>
                                 </div>
                               </div>
-                            )}
-                          </div>
-                        )}
+
+                              {/* Right: Progress bar & Test Counts */}
+                              {submissionResult.totalTestCases !== undefined && (
+                                <div className="flex flex-col sm:items-end gap-1.5 shrink-0 min-w-[160px]">
+                                  <div className="flex items-center justify-between sm:justify-end gap-2 text-xs font-semibold">
+                                    <span>Passed:</span>
+                                    <span className={`font-mono font-bold ${isAllPassed ? 'text-emerald-700' : 'text-slate-800'}`}>
+                                      {submissionResult.passedTestCases} / {submissionResult.totalTestCases} Test Cases
+                                    </span>
+                                  </div>
+                                  <div className="w-full sm:w-44 h-2 bg-black/10 rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full transition-all duration-500 ${
+                                        isAllPassed ? 'bg-emerald-600' : 'bg-rose-500'
+                                      }`}
+                                      style={{
+                                        width: `${
+                                          submissionResult.totalTestCases > 0
+                                            ? Math.round(
+                                                ((submissionResult.passedTestCases || 0) /
+                                                  submissionResult.totalTestCases) *
+                                                  100
+                                              )
+                                            : 0
+                                        }%`,
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {/* Test Case Selection Tabs */}
                         {testCaseResults.length > 0 && (
@@ -1199,21 +1211,25 @@ export const ExamInterface: React.FC = () => {
                                     key={idx}
                                     onClick={() => setSelectedTestCaseIndex(idx)}
                                     className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer transition shrink-0 ${
-                                      isSelected
-                                        ? 'bg-slate-900 text-white shadow-xs'
-                                        : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700'
+                                      passed
+                                        ? isSelected
+                                          ? 'bg-emerald-600 text-white shadow-xs'
+                                          : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                        : isSelected
+                                        ? 'bg-rose-600 text-white shadow-xs'
+                                        : 'bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200'
                                     }`}
                                   >
                                     {passed ? (
                                       <CheckCircle2
                                         className={`w-3.5 h-3.5 ${
-                                          isSelected ? 'text-emerald-400' : 'text-emerald-600'
+                                          isSelected ? 'text-white' : 'text-emerald-600'
                                         }`}
                                       />
                                     ) : (
                                       <XCircle
                                         className={`w-3.5 h-3.5 ${
-                                          isSelected ? 'text-rose-400' : 'text-rose-600'
+                                          isSelected ? 'text-white' : 'text-rose-600'
                                         }`}
                                       />
                                     )}
@@ -1224,8 +1240,8 @@ export const ExamInterface: React.FC = () => {
                                       <span
                                         className={`px-1.5 py-0.2 rounded text-[10px] font-mono flex items-center gap-1 ${
                                           isSelected
-                                            ? 'bg-slate-800 text-amber-300'
-                                            : 'bg-slate-200 text-amber-700'
+                                            ? 'bg-white/20 text-white'
+                                            : 'bg-slate-200 text-amber-800'
                                         }`}
                                       >
                                         <Lock className="w-2.5 h-2.5" />

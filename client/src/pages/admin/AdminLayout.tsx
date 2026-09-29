@@ -26,7 +26,9 @@ export const AdminLayout: React.FC = () => {
 
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
   const [showApiModal, setShowApiModal] = useState<boolean>(false);
-  const [apiUrlInput, setApiUrlInput] = useState<string>(() => localStorage.getItem('ANVESHANA_API_URL') || '');
+  const [apiUrlInput, setApiUrlInput] = useState<string>(
+    () => localStorage.getItem('ANVESHANA_API_URL') || (import.meta.env.VITE_API_URL || 'https://examportal-a5f9.onrender.com')
+  );
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const menuItems = [

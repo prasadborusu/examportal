@@ -208,7 +208,7 @@ export const ExamInterface: React.FC = () => {
 
       for (const q of data.questions || []) {
         initialCodes[q.id] = {
-          java: q.starter_templates?.java || '// Write Java code here\npublic class Main {\n    public static void main(String[] args) {\n        \n    }\n}',
+          java: q.starter_templates?.java || 'import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        // Write your solution here\n        \n    }\n}',
           cpp: q.starter_templates?.cpp || '// Write C++ code here\n#include <iostream>\nusing namespace std;\n\nint main() {\n    return 0;\n}',
           python: q.starter_templates?.python || '# Write Python code here\nimport sys\n\ndef main():\n    pass\n\nif __name__ == "__main__":\n    main()',
           c: q.starter_templates?.c || '// Write C code here\n#include <stdio.h>\n\nint main() {\n    return 0;\n}',

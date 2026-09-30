@@ -27,6 +27,20 @@ router.post('/login', (req: Request, res: Response): void => {
   }
 });
 
+// Admin 4-digit PIN verification
+router.post('/verify-pin', (req: Request, res: Response): void => {
+  const { pin } = req.body;
+  if (pin === '8520') {
+    res.json({
+      success: true,
+      token: 'anveshana-admin-pin-token-' + Date.now(),
+      message: 'Access granted',
+    });
+  } else {
+    res.status(401).json({ success: false, error: 'Incorrect 4-digit password.' });
+  }
+});
+
 // Admin Dashboard Overview Stats
 router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
   try {

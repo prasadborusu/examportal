@@ -11,11 +11,16 @@ import {
   ShieldAlert,
   ExternalLink,
   CheckCircle2,
+  Lock,
 } from 'lucide-react';
 import { BACKEND_URL } from '../../api/config';
+import { AdminPinLock } from './AdminPinLock';
 
 export const AdminLayout: React.FC = () => {
   const location = useLocation();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return sessionStorage.getItem('admin_authenticated') === 'true';
+  });
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
 
   const menuItems = [
@@ -62,6 +67,16 @@ export const AdminLayout: React.FC = () => {
     if (path !== '/admin' && location.pathname.startsWith(path)) return true;
     return false;
   };
+
+  const handleLock = () => {
+    sessionStorage.removeItem('admin_authenticated');
+    sessionStorage.removeItem('admin_auth_time');
+    setIsAuthenticated(false);
+  };
+
+  if (!isAuthenticated) {
+    return <AdminPinLock onSuccess={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <div className="h-screen flex bg-[#FAFBFF] overflow-hidden">
@@ -169,6 +184,15 @@ export const AdminLayout: React.FC = () => {
               </div>
               <span className="font-semibold">Coordinator</span>
             </div>
+
+            <button
+              onClick={handleLock}
+              title="Lock Admin Portal"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-slate-600 hover:text-rose-600 bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 transition cursor-pointer"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Lock</span>
+            </button>
           </div>
         </header>
 

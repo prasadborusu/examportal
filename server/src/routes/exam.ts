@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../db.js';
 import { executeCodeOnPiston } from '../piston.js';
-import { SubmissionStatus, ExamResult } from '../types.js';
+import { SubmissionStatus, ExamResult, Submission } from '../types.js';
 
 const router = Router();
 
@@ -306,6 +306,124 @@ function normalizeOutput(str: string): string {
     .trim();
 }
 
+// Helper: Evaluates a coding problem against all test cases and saves submission
+async function evaluateAndSaveCodingSubmission(
+  participantId: string,
+  question: any,
+  language: string,
+  code: string
+): Promise<{
+  submission: Submission;
+  testCaseResults: any[];
+  compilationError: string | null;
+}> {
+  const testCases = await db.getAllTestCasesForExecution(question.id);
+  if (testCases.length === 0) {
+    testCases.push({
+      id: 'tc-dummy',
+      question_id: question.id,
+      input: '',
+      expected_output: '',
+      is_hidden: false,
+      marks: question.marks,
+    });
+  }
+
+  let passedCount = 0;
+  let totalMarksEarned = 0;
+  let compilationError = false;
+  let compilationErrorOutput = '';
+  let runtimeError = false;
+  let totalTimeMs = 0;
+  let maxMemoryMb = 0;
+  const testCaseResults: any[] = [];
+
+  for (let i = 0; i < testCases.length; i++) {
+    const tc = testCases[i];
+    const isHidden = tc.is_hidden || tc.type === 'HIDDEN';
+    const exec = await executeCodeOnPiston(language, code, tc.input);
+
+    if (exec.compilationError) {
+      compilationError = true;
+      compilationErrorOutput = exec.stderr || exec.output;
+      testCaseResults.push({
+        caseNumber: i + 1,
+        type: isHidden ? 'HIDDEN' : 'PUBLIC',
+        passed: false,
+        status: 'Compilation Error',
+        timeMs: exec.timeMs,
+        error: exec.stderr || exec.output,
+      });
+      break;
+    }
+
+    if (exec.runtimeError) {
+      runtimeError = true;
+    }
+
+    totalTimeMs += exec.timeMs;
+    maxMemoryMb = Math.max(maxMemoryMb, exec.memoryMb);
+
+    const normalizedActual = normalizeOutput(exec.stdout);
+    const normalizedExpected = normalizeOutput(tc.expected_output);
+    const passed = normalizedActual === normalizedExpected && !exec.runtimeError;
+
+    if (passed) {
+      passedCount++;
+      totalMarksEarned += tc.marks || Math.round(question.marks / testCases.length);
+    }
+
+    testCaseResults.push({
+      caseNumber: i + 1,
+      type: isHidden ? 'HIDDEN' : 'PUBLIC',
+      passed,
+      status: passed ? 'Passed' : exec.runtimeError ? 'Runtime Error' : 'Wrong Answer',
+      timeMs: exec.timeMs,
+      memoryMb: exec.memoryMb,
+      marks: tc.marks,
+      input: isHidden ? undefined : tc.input,
+      expectedOutput: isHidden ? undefined : tc.expected_output,
+      actualOutput: isHidden ? undefined : exec.stdout,
+      error: isHidden ? (exec.runtimeError ? 'Runtime Error' : undefined) : exec.stderr,
+    });
+  }
+
+  let status: SubmissionStatus = 'Wrong Answer';
+  if (compilationError) {
+    status = 'Compilation Error';
+    totalMarksEarned = 0;
+  } else if (passedCount === testCases.length) {
+    status = 'Accepted';
+    totalMarksEarned = question.marks;
+  } else if (passedCount > 0) {
+    status = 'Partial Score';
+  } else if (runtimeError) {
+    status = 'Runtime Error';
+  }
+
+  totalMarksEarned = Math.min(totalMarksEarned, question.marks);
+
+  const submission = await db.saveOrUpdateSubmission({
+    participant_id: participantId,
+    question_id: question.id,
+    section_id: question.section_id || undefined,
+    language,
+    code,
+    status,
+    score: totalMarksEarned,
+    passed_test_cases: passedCount,
+    total_test_cases: testCases.length,
+    execution_time_ms: totalTimeMs,
+    memory_kb: Math.round(maxMemoryMb * 1024),
+  });
+
+  return {
+    submission,
+    testCaseResults,
+    compilationError: compilationError ? compilationErrorOutput : null,
+  };
+}
+
 // 4. Submit Solution (Evaluated server-side against public and hidden test cases)
 router.post('/:attemptId/submit', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -329,117 +447,21 @@ router.post('/:attemptId/submit', async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const testCases = await db.getAllTestCasesForExecution(questionId);
-    if (testCases.length === 0) {
-      testCases.push({
-        id: 'tc-dummy',
-        question_id: questionId,
-        input: '',
-        expected_output: '',
-        is_hidden: false,
-        marks: question.marks,
-      });
-    }
-
-    let passedCount = 0;
-    let totalMarksEarned = 0;
-    let compilationError = false;
-    let compilationErrorOutput = '';
-    let runtimeError = false;
-    let totalTimeMs = 0;
-    let maxMemoryMb = 0;
-    const testCaseResults: any[] = [];
-
-    for (let i = 0; i < testCases.length; i++) {
-      const tc = testCases[i];
-      const isHidden = tc.is_hidden || tc.type === 'HIDDEN';
-      const exec = await executeCodeOnPiston(language, code, tc.input);
-
-      if (exec.compilationError) {
-        compilationError = true;
-        compilationErrorOutput = exec.stderr || exec.output;
-        testCaseResults.push({
-          caseNumber: i + 1,
-          type: isHidden ? 'HIDDEN' : 'PUBLIC',
-          passed: false,
-          status: 'Compilation Error',
-          timeMs: exec.timeMs,
-          error: exec.stderr || exec.output,
-        });
-        break;
-      }
-
-      if (exec.runtimeError) {
-        runtimeError = true;
-      }
-
-      totalTimeMs += exec.timeMs;
-      maxMemoryMb = Math.max(maxMemoryMb, exec.memoryMb);
-
-      const normalizedActual = normalizeOutput(exec.stdout);
-      const normalizedExpected = normalizeOutput(tc.expected_output);
-      const passed = normalizedActual === normalizedExpected && !exec.runtimeError;
-
-      if (passed) {
-        passedCount++;
-        totalMarksEarned += tc.marks || Math.round(question.marks / testCases.length);
-      }
-
-      testCaseResults.push({
-        caseNumber: i + 1,
-        type: isHidden ? 'HIDDEN' : 'PUBLIC',
-        passed,
-        status: passed ? 'Passed' : exec.runtimeError ? 'Runtime Error' : 'Wrong Answer',
-        timeMs: exec.timeMs,
-        memoryMb: exec.memoryMb,
-        marks: tc.marks,
-        // STRICT SECURITY: Never expose hidden test case input/output to frontend
-        input: isHidden ? undefined : tc.input,
-        expectedOutput: isHidden ? undefined : tc.expected_output,
-        actualOutput: isHidden ? undefined : exec.stdout,
-        error: isHidden ? (exec.runtimeError ? 'Runtime Error' : undefined) : exec.stderr,
-      });
-    }
-
-    let status: SubmissionStatus = 'Wrong Answer';
-    if (compilationError) {
-      status = 'Compilation Error';
-      totalMarksEarned = 0;
-    } else if (passedCount === testCases.length) {
-      status = 'Accepted';
-      totalMarksEarned = question.marks;
-    } else if (passedCount > 0) {
-      status = 'Partial Score';
-    } else if (runtimeError) {
-      status = 'Runtime Error';
-    }
-
-    const submission = await db.saveOrUpdateSubmission({
-      participant_id: participant.id,
-      question_id: question.id,
-      section_id: question.section_id || undefined,
-      language,
-      code,
-      status,
-      score: totalMarksEarned,
-      passed_test_cases: passedCount,
-      total_test_cases: testCases.length,
-      execution_time_ms: totalTimeMs,
-      memory_kb: Math.round(maxMemoryMb * 1024),
-    });
+    const evalResult = await evaluateAndSaveCodingSubmission(participant.id, question, language, code);
+    const sub = evalResult.submission;
 
     res.json({
       success: true,
-      submissionId: submission.id,
-      status,
-      score: totalMarksEarned,
+      submissionId: sub.id,
+      status: sub.status,
+      score: sub.score,
       maxMarks: question.marks,
-      passedTestCases: passedCount,
-      totalTestCases: testCases.length,
-      executionTimeMs: totalTimeMs,
-      memoryMb: maxMemoryMb,
-      testCases: testCaseResults,
-      compilationError: compilationError ? compilationErrorOutput : null,
+      passedTestCases: sub.passed_test_cases,
+      totalTestCases: sub.total_test_cases,
+      executionTimeMs: sub.execution_time_ms,
+      memoryMb: sub.memory_kb ? Math.round(sub.memory_kb / 1024) : 0,
+      testCases: evalResult.testCaseResults,
+      compilationError: evalResult.compilationError,
     });
   } catch (err: any) {
     console.error('Error in POST /:attemptId/submit:', err);
@@ -679,6 +701,7 @@ router.post('/:attemptId/security-event', async (req: Request, res: Response): P
 router.post('/:attemptId/final-submit', async (req: Request, res: Response): Promise<void> => {
   try {
     const attemptId = req.params.attemptId as string;
+    const { reason, draftCodes } = req.body;
     const participant = await db.getParticipantById(attemptId);
     if (!participant) {
       res.status(404).json({ error: 'Attempt not found.' });
@@ -694,6 +717,29 @@ router.post('/:attemptId/final-submit', async (req: Request, res: Response): Pro
     const sections = await db.getSectionsByExam(exam.id);
     const questions = await db.getQuestionsByExam(exam.id);
     const submissions = await db.getSubmissionsByParticipant(attemptId);
+
+    // Auto-evaluate any unsubmitted coding problems if candidate wrote code
+    if (draftCodes && typeof draftCodes === 'object') {
+      for (const q of questions) {
+        if (q.question_type === 'CODING') {
+          const hasSubmission = submissions.some((s) => s.question_id === q.id);
+          const draft = draftCodes[q.id];
+          if (!hasSubmission && draft && draft.code && typeof draft.code === 'string' && draft.code.trim().length > 15) {
+            try {
+              const evalRes = await evaluateAndSaveCodingSubmission(
+                participant.id,
+                q,
+                draft.language || 'java',
+                draft.code
+              );
+              submissions.push(evalRes.submission);
+            } catch (err) {
+              console.error('Auto-evaluating draft submission error for question ' + q.id, err);
+            }
+          }
+        }
+      }
+    }
 
     let totalScore = 0;
     let questionsAnswered = 0;

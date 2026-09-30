@@ -549,15 +549,27 @@ export const ExamInterface: React.FC = () => {
     }
   };
 
-  // Final submit exam
+  // Final submit exam with automatic evaluation of all unsubmitted code
   const handleFinalSubmit = async (reason = 'USER_COMPLETED') => {
     if (!attemptId) return;
     setIsSubmittingFinal(true);
     try {
+      // Gather latest written code across all coding questions
+      const draftCodes: Record<string, { language: string; code: string }> = {};
+      questions.forEach((q) => {
+        if (q.question_type === 'CODING') {
+          const lang = selectedLanguage;
+          const code = (q.id === currentQuestion?.id ? currentCode : codePerQuestion[q.id]?.[lang]) || '';
+          if (code.trim().length > 0) {
+            draftCodes[q.id] = { language: lang, code };
+          }
+        }
+      });
+
       const res = await fetch(`/api/exam/${attemptId}/final-submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify({ reason, draftCodes }),
       });
       await res.json();
       navigate(`/exam/${attemptId}/result`);
@@ -1807,6 +1819,24 @@ export const ExamInterface: React.FC = () => {
                                       ? 'Runtime exception occurred during execution.'
                                       : 'Review individual test cases below to resolve mismatches.'}
                                   </p>
+
+                                  {/* Dry Run vs Submitted Reminder */}
+                                  {submissionResult.score === undefined && (
+                                    <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center gap-3">
+                                      <span className="text-[11px] text-blue-900 font-semibold">
+                                        💡 Public dry run complete. Click <strong>Submit Solution</strong> to record your score!
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={handleSubmitSolution}
+                                        disabled={isSubmitting}
+                                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow-xs cursor-pointer flex items-center gap-1"
+                                      >
+                                        <Check className="w-3 h-3 stroke-[3]" />
+                                        <span>Submit Solution</span>
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -2161,14 +2191,35 @@ export const ExamInterface: React.FC = () => {
                 Ready to End Your Assessment?
               </h3>
               <p className="text-xs text-slate-500 leading-relaxed">
-                Once submitted, you will not be able to return or modify your code. Your solutions will be permanently evaluated against all test cases.
+                Once submitted, your solutions will be finalized and graded across all public and hidden test cases.
+              </p>
+            </div>
+
+            {/* Questions Summary Card */}
+            <div className="p-3.5 bg-blue-50/70 border border-blue-100 rounded-2xl text-left space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-600 font-medium">Coding Questions Attempted:</span>
+                <span className="font-bold text-[#0B2A5B]">
+                  {
+                    questions.filter((q) => {
+                      if (q.question_type !== 'CODING') return false;
+                      const hasSub = submissionsByQuestion[q.id];
+                      const hasDraft = (q.id === currentQuestion?.id ? currentCode : codePerQuestion[q.id]?.[selectedLanguage])?.trim().length > 15;
+                      return Boolean(hasSub || hasDraft);
+                    }).length
+                  }{' '}
+                  / {questions.filter((q) => q.question_type === 'CODING').length}
+                </span>
+              </div>
+              <p className="text-[11px] text-blue-700 leading-relaxed">
+                ✓ All code written in your editor will be automatically evaluated and submitted. You will receive marks for all passed test cases.
               </p>
             </div>
 
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setShowEndExamModal(false)}
-                className="flex-1 py-3 rounded-xl text-xs font-semibold border border-slate-200 text-slate-700 hover:bg-slate-50 transition"
+                className="flex-1 py-3 rounded-xl text-xs font-semibold border border-slate-200 text-slate-700 hover:bg-slate-50 transition cursor-pointer"
               >
                 Cancel & Continue
               </button>
@@ -2178,9 +2229,16 @@ export const ExamInterface: React.FC = () => {
                   handleFinalSubmit('USER_COMPLETED');
                 }}
                 disabled={isSubmittingFinal}
-                className="flex-1 py-3 rounded-xl text-xs font-bold bg-[#EF4444] text-white hover:bg-[#DC2626] transition flex items-center justify-center gap-1.5"
+                className="flex-1 py-3 rounded-xl text-xs font-bold bg-[#EF4444] text-white hover:bg-[#DC2626] transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
               >
-                {isSubmittingFinal ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Final Submit</span>}
+                {isSubmittingFinal ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Grading & Submitting...</span>
+                  </>
+                ) : (
+                  <span>Final Submit</span>
+                )}
               </button>
             </div>
           </div>

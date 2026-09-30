@@ -35,7 +35,31 @@ export const AdminPinLock: React.FC<AdminPinLockProps> = ({ onSuccess }) => {
 
   const handleDigitChange = (index: number, val: string) => {
     const cleanVal = val.replace(/\D/g, '');
-    if (!cleanVal && val !== '') return;
+    if (!cleanVal && val !== '') {
+      const newDigits = [...digits];
+      newDigits[index] = '';
+      setDigits(newDigits);
+      return;
+    }
+
+    // If multiple digits pasted or typed rapidly
+    if (cleanVal.length > 1) {
+      const chars = cleanVal.slice(0, 4).split('');
+      const newDigits = [...digits];
+      for (let i = 0; i < chars.length && (index + i) < 4; i++) {
+        newDigits[index + i] = chars[i];
+      }
+      setDigits(newDigits);
+      setError(null);
+      const fullPin = newDigits.join('');
+      if (fullPin.length === 4) {
+        verifyPin(fullPin);
+      } else {
+        const nextIdx = Math.min(index + chars.length, 3);
+        inputRefs[nextIdx].current?.focus();
+      }
+      return;
+    }
 
     const newDigits = [...digits];
     newDigits[index] = cleanVal.slice(-1);
@@ -47,12 +71,10 @@ export const AdminPinLock: React.FC<AdminPinLockProps> = ({ onSuccess }) => {
       inputRefs[index + 1].current?.focus();
     }
 
-    // Auto verify when last digit is filled
-    if (cleanVal && index === 3) {
-      const fullPin = newDigits.join('');
-      if (fullPin.length === 4) {
-        verifyPin(fullPin);
-      }
+    // Auto verify when all 4 digits are filled
+    const fullPin = newDigits.join('');
+    if (fullPin.length === 4) {
+      verifyPin(fullPin);
     }
   };
 
@@ -231,8 +253,10 @@ export const AdminPinLock: React.FC<AdminPinLockProps> = ({ onSuccess }) => {
                 ref={inputRefs[idx]}
                 type={showPin ? 'text' : 'password'}
                 inputMode="numeric"
-                maxLength={1}
+                pattern="[0-9]*"
+                maxLength={2}
                 value={digit}
+                onFocus={(e) => e.target.select()}
                 onChange={(e) => handleDigitChange(idx, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(idx, e)}
                 onPaste={handlePaste}

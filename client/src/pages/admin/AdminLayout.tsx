@@ -18,9 +18,8 @@ import { AdminPinLock } from './AdminPinLock';
 
 export const AdminLayout: React.FC = () => {
   const location = useLocation();
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem('admin_authenticated') === 'true';
-  });
+  // Always require PIN authentication on fresh entry or URL search
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
 
   const menuItems = [
